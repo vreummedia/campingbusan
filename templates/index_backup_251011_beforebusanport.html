@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>부산 캠핑장 정보</title>
+    <style>
+        .price-chip{
+          display:inline-block;
+          width:16px; height:16px;
+          border-radius:4px;
+          border:1px solid rgba(0,0,0,.1);
+          vertical-align:middle;
+        }
+        .price-chip--empty{
+          background: #e9ecef;
+        }
+        /* 공통: 모바일/태블릿은 가로폭 꽉 차게 */
+        .camp-map { margin: 6px 0 10px; }
+        .camp-map img {
+          display: block;
+          width: 100%;
+          height: auto;            /* 세로 비율 유지 */
+          margin: 0 auto;          /* 중앙 정렬 */
+          border-radius: 12px;
+          border: 1px solid #ddd;
+          background: #f8f8f8;
+          /* object-fit: contain;   필요 없다면 생략, cover 쓰지 마세요 (자름) */
+        }
+        /* 데스크톱(넓은 화면)에서는 절반 크기 + 가운데 정렬 */
+        @media (min-width: 992px) {
+          .camp-map img {
+            width: 50%;           /* 컨텐츠 폭의 절반 */
+            max-width: 900px;     /* 너무 큰 모니터에서 과도하게 커지지 않도록 상한선 */
+          }
+        }
+        /* 요금표 */
+        .price-wrap {
+            background: #f8f9fa;
+            border: 1px solid #ddd;
+            border-radius: 12px;
+            padding: 12px;
+            margin: 8px 0 16px;
+        }
+        .price-title {
+            font-weight: 700;
+            margin-bottom: 8px;
+            color: #333;
+        }
+        .price-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 15px;
+            background: #fff;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        .price-table th, .price-table td {
+            border: 1px solid #eee;
+            padding: 8px 10px;
+            text-align: center;
+        }
+        .price-table th {
+            background: #f1f3f5;
+            font-weight: 700;
+            color: #333;
+        }
+        .price-note {
+            margin-top: 8px;
+            color: #495057;
+            font-size: 14px;
+        }
+
+        /* 기본 스타일 */
+        body { font-family: sans-serif; margin: 20px; background-color: #f4f4f9; }
+        h1 { color: #333; }
+        .camp-section { border: 1px solid #ddd; padding: 20px; margin-bottom: 25px; border-radius: 12px; background-color: #fff; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
+        .camp-title { font-size: 28px; color: #333; margin-bottom: 15px; border-bottom: 2px solid #007bff; padding-bottom: 10px; }
+        
+        /* 날짜 선택기 */
+        .date-selector { 
+            margin-bottom: 20px; padding: 15px; border: 1px solid #ddd; border-radius: 8px; 
+            background-color: #e9ecef; display: flex; align-items: center; flex-wrap: wrap;
+        }
+        .date-selector label { font-weight: bold; margin-right: 10px; color: #333; }
+        .date-selector input[type="date"] { padding: 8px; border: 1px solid #ccc; border-radius: 4px; margin: 0 5px; }
+        .date-selector button { 
+            padding: 8px 15px; background-color: #007bff; color: white; border: none; 
+            border-radius: 4px; cursor: pointer; font-weight: bold; margin-left: 5px; 
+        }
+        .date-selector .today-button { background-color: #28a745; }
+        .date-selector .reserve-button { background-color: #ffc107; color: #212529; font-weight: bold; margin-left: 10px; }
+        .date-selector .nav-button { padding: 8px 10px; font-size: 16px; background-color: #6c757d; color: white; margin: 0; line-height: 1; }
+        .date-selector .nav-button:hover { background-color: #5a6268; }
+        
+        /* 탭 */
+        .camp-tabs { display: flex; justify-content: flex-start; margin: 20px 0; border-bottom: 2px solid #ccc; flex-wrap: wrap; }
+        .camp-tab { padding: 10px 15px; cursor: pointer; font-size: 18px; font-weight: bold; color: #6c757d; border: none; background-color: transparent; border-bottom: 2px solid transparent; transition: all 0.2s; margin-right: 5px; }
+        .camp-tab:hover { color: #007bff; }
+        .camp-tab.active { color: #007bff; border-bottom: 2px solid #007bff; background-color: #e9ecef; border-top-left-radius: 8px; border-top-right-radius: 8px; }
+        .camp-tab.disabled { color:#aaa; cursor:not-allowed; opacity:.6; }
+        
+        /* 삼락 A/B 테이블 */
+        .area-map-container { display: flex; justify-content: space-around; flex-wrap: nowrap; margin-bottom: 20px; width: 100%; }
+        .area-map-container > div { width: 50%; padding: 0 10px; box-sizing: border-box; text-align: center; }
+        .area-table-a, .area-table-b { border-collapse: collapse; margin: 10px auto; width: 100%; max-width: 550px; }
+        .area-table-a td, .area-table-b td { border: 1px solid #ccc; padding: 10px 5px; text-align: center; height: 40px; min-width: 40px; box-sizing: border-box; }
+        .status-on { background-color: #28a745; color: white; font-weight: bold; }
+        .status-off { background-color: #e9ecef; color: black; }
+        .status-booked { background-color: #dc3545; color: white; font-weight: bold; }
+
+        /* 나열형 박스 (대저/영도/구덕/부산항 등 공용) */
+        .area-container { margin-top: 0 !important; margin-bottom: 0 !important; padding-top: 0 !important; padding-bottom: 0 !important; }
+        .area-container + .area-container { margin-top: 5px; }
+        .area-container h3 { margin-bottom: 5px; padding-bottom: 0; }
+        .site-list { display: flex; flex-wrap: wrap; justify-content: flex-start; margin-top: 15px; max-width: 100%; font-size: 0; }
+        .site-item { background-color: #fff; border: 1px solid #ccc; border-radius: 5px; padding: 5px; margin: 4px; width: 45px; height: 45px; line-height: 35px; text-align: center; color: black; font-size: 16px; font-weight: bold; }
+        .site-item.text-available { background-color: #e6ffe6; color: #008000; border-color: #008000; }
+        .site-item.text-unavailable { background-color: #ffe6e6; color: #ff0000; border-color: #ff0000; }
+
+        @media (max-width: 768px) {
+          .price-table th, .price-table td { padding: 8px 6px; font-size: 14px; }
+          .camp-map img { max-height: 260px; }
+
+          .area-map-container {
+            flex-direction: column;
+            align-items: stretch;
+          }
+          .area-map-container > div {
+            width: 100%;
+            max-width: none;
+            padding: 0;
+            margin-bottom: 20px;
+          }
+          .area-table-a, .area-table-b {
+            width: 100%;
+            max-width: 100%;
+          }
+        }
+                                      
+    </style>
+</head>
+<body>
+    <h1>부산 캠핑장 실시간 예약 정보</h1>
+
+    <form class="date-selector" id="dateForm" method="POST" action="{{ url_for('home') }}">
+        <label for="resdate">예약 조회 날짜:</label>
+        <button type="button" class="nav-button" onclick="moveDate(-1)">◀</button>
+        <input type="date" id="resdate" name="resdate" value="{{ selected_date }}">
+        <button type="button" class="nav-button" onclick="moveDate(1)">▶</button>
+        <button type="submit">조회</button>
+        <button type="button" class="today-button" onclick="setTodayAndSubmit()">오늘</button>
+        <button type="button" class="reserve-button" onclick="openReservationLink()">예약</button>
+        <input type="hidden" id="campTabInput" name="camp_tab" value="{{ selected_camp_key }}">
+    </form>
+    
+    <p style="font-size: 1.1em; font-weight: bold;">현재 조회 날짜: <span style="color: #007bff;">{{ selected_date }}</span></p>
+
+    <div class="camp-tabs">
+    {% for key, camp in camp_tabs.items() %}
+        {% if key == 'busan_port' %}
+            <button class="camp-tab disabled" title="안정화 작업 중입니다." disabled>
+                {{ camp.name }}
+            </button>
+        {% else %}
+            <button 
+                class="camp-tab {% if key == selected_camp_key %}active{% endif %}" 
+                onclick="switchCamp('{{ key }}')">
+                {{ camp.name }}
+            </button>
+        {% endif %}
+    {% endfor %}
+    </div>
+
+    {% for camp in all_camps %}
+    <div class="camp-section">
+        <!-- 지도 + 요금표 (맨 위) -->
+        {% if camp.media is defined %}
+          {% if camp.media.image_url %}
+            <div class="camp-map">
+              <img src="{{ camp.media.image_url }}" alt="{{ camp.name }} 지도">
+            </div>
+          {% endif %}
+
+          {% if camp.media.price_table and camp.media.price_table.rows %}
+            <div class="price-wrap">
+              <div class="price-title">요금 안내</div>
+              <table class="price-table">
+                <thead>
+                  <tr>
+                    <th style="width:36px;"></th>
+                    <th>구분</th>
+                    {% for col in camp.media.price_table.columns %}
+                      <th>{{ col }}</th>
+                    {% endfor %}
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for row in camp.media.price_table.rows %}
+                  <tr>
+                    <td>
+                      <span class="price-chip {{ '' if row.color else 'price-chip--empty' }}"
+                            style="{{ 'background: ' ~ row.color ~ ';' if row.color }}"></span>
+                    </td>
+                    <td>{{ row.label }}</td>
+                    {% for col in camp.media.price_table.columns %}
+                      <td>{{ row.cols.get(col, '—') }}</td>
+                    {% endfor %}
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+
+              {% if camp.media.price_note %}
+                <div class="price-note">{{ camp.media.price_note }}</div>
+              {% endif %}
+            </div>
+          {% endif %}
+        {% endif %}
+
+        <h2 class="camp-title">{{ camp.name }} 캠핑장</h2> 
+        {% if camp.error %}
+            <p style="color: red;">{{ camp.error }}</p>
+        {% else %}
+
+            {% if selected_camp_key == 'samnak' %}
+                {# ---- 삼락 ---- #}
+                {% set total_a = 36 %}{% set total_b = 31 %}{% set total_c = 50 %}
+                {% set available_a = camp.areas['area_a'].num_available %}
+                {% set available_b = camp.areas['area_b'].num_available %}
+                {% set available_c = camp.areas['area_c'].num_available %}
+                <div class="area-map-container">
+                    <div>
+                        <h3>오토 캠핑 SITE A (잔여: {{ available_a }}개 / {{ total_a }}개)</h3>
+                        <table class="area-table-a">
+                            {% set rows = [
+                                ['빈', '07', '06', '05', '04', '03', '02', '01'],
+                                ['08', '빈', '27', '26', '25', '24', '23', '빈'],
+                                ['09', '28', '빈', '빈', '빈', '빈', '빈', '22'],
+                                ['10', '29', '빈', '빈', '빈', '빈', '빈', '21'],
+                                ['11', '30', '빈', '빈', '빈', '빈', '빈', '20'],
+                                ['12', '31', '빈', '빈', '빈', '빈', '빈', '19'],
+                                ['13', '빈', '14', '15', '16', '17', '18', '빈']
+                            ] %}
+                            {% for row in rows %}
+                                <tr>
+                                {% for site_num in row %}
+                                    {% if site_num == '빈' %}
+                                        <td></td>
+                                    {% else %}
+                                        <td class="{% if site_num in camp.areas['area_a'].available %}status-on{% elif site_num in camp.areas['area_a'].unavailable %}status-booked{% else %}status-off{% endif %}">{{ site_num }}</td>
+                                    {% endif %}
+                                {% endfor %}
+                                </tr>
+                            {% endfor %}
+                        </table>
+                    </div>
+                    <div>
+                        <h3>오토 캠핑 SITE B (잔여: {{ available_b }}개 / {{ total_b }}개)</h3>
+                        <table class="area-table-b">
+                            {% set rows = [
+                                ['01', '02', '03', '04', '05', '06', '07', '빈'],
+                                ['빈', '23', '24', '25', '26', '27', '빈', '08'],
+                                ['22', '빈', '빈', '빈', '빈', '빈', '28', '09'],
+                                ['21', '빈', '빈', '빈', '빈', '빈', '29', '10'],
+                                ['20', '빈', '빈', '빈', '빈', '빈', '30', '11'],
+                                ['19', '빈', '빈', '빈', '빈', '빈', '31', '12'],
+                                ['빈', '18', '17', '16', '15', '14', '빈', '13']
+                            ] %}
+                            {% for row in rows %}
+                                <tr>
+                                {% for site_num in row %}
+                                    {% if site_num == '빈' %}
+                                        <td></td>
+                                    {% else %}
+                                        <td class="{% if site_num in camp.areas['area_b'].available %}status-on{% elif site_num in camp.areas['area_b'].unavailable %}status-booked{% else %}status-off{% endif %}">{{ site_num }}</td>
+                                    {% endif %}
+                                {% endfor %}
+                                </tr>
+                            {% endfor %}
+                        </table>
+                    </div>
+                </div>
+
+                <div class="camp-area">
+                    <h3>일반 캠핑 SITE C (잔여: {{ available_c }}개 / {{ total_c }}개)</h3>
+                    <div class="site-list">
+                    {% for i in range(1, 51) %}
+                        {% set site_num = "%02d" | format(i) %}
+                        {% set status_class = "text-available" if site_num in camp.areas['area_c'].available else ("text-unavailable" if site_num in camp.areas['area_c'].unavailable else "") %}
+                        <div class="site-item {{ status_class }}">{{ site_num }}</div>
+                    {% endfor %}
+                    </div>
+                </div>
+
+            {% elif selected_camp_key == 'daejeo' %}
+                {# ---- 대저 ---- #}
+                {% set area_definitions = {
+                    'area_a': {'name': 'A구역', 'size': '5x8', 'total': 40}, 
+                    'area_b': {'name': 'B구역', 'size': '12x12', 'total': 144}, 
+                    'area_c': {'name': 'C구역', 'size': '10x12', 'total': 120}, 
+                    'area_d': {'name': 'D구역', 'size': '10x10', 'total': 100}
+                } %}
+                {% for area_key, defs in area_definitions.items() %}
+                    {% set max_num = camp.areas[area_key].max_site_num %}
+                    {% set total_count = defs.total %}
+                    {% set available_count = camp.areas[area_key].num_available %}
+                    {% set zero_padding = 2 if max_num < 100 else 3 %}
+                    <div class="area-container">
+                        <h3 class="area-title">{{ defs.name }} ({{ defs.size }}) (잔여: {{ available_count }}개 / {{ total_count }}개)</h3>
+                        <div class="site-list">
+                        {% for i in range(1, max_num + 1) %}
+                            {% set site_num = ("%0" + zero_padding|string + "d") | format(i) %}
+                            {% set status_class = "text-available" if site_num in camp.areas[area_key].available else ("text-unavailable" if site_num in camp.areas[area_key].unavailable else "") %}
+                            <div class="site-item {{ status_class }}">{{ site_num }}</div>
+                        {% endfor %}
+                        {% if max_num == 0 %}
+                            <p style="color:#6c757d; font-style: italic;">해당 구역의 사이트 정보를 찾을 수 없습니다.</p>
+                        {% endif %}
+                        </div>
+                    </div>
+                {% endfor %}
+
+            {% elif selected_camp_key == 'hwamyeong' %}
+                {# ---- 화명 ---- #}
+                {% set area_definitions = {
+                    'area_a': {'name': 'A구역', 'size': '미정'},
+                    'area_b': {'name': 'B구역', 'size': '미정'},
+                    'area_c': {'name': 'C구역', 'size': '미정'},
+                    'area_d': {'name': 'D구역', 'size': 'D구역'},
+                    'area_e': {'name': 'E구역', 'size': 'E구역'}
+                } %}
+                {% set area_keys_to_show = ['area_a', 'area_b', 'area_c', 'area_d', 'area_e'] %}
+                {% for area_key in area_keys_to_show %}
+                    {% set defs = area_definitions[area_key] %}
+                    {% set area_data = camp.areas[area_key] %}
+                    {% if area_key in ['area_d', 'area_e'] %}
+                        {% set total_count = area_data.available|length + area_data.unavailable|length %}
+                        {% set site_list_full_names = area_data.available + area_data.unavailable %}
+                    {% else %}
+                        {% set total_count = area_data.max_site_num %}
+                    {% endif %}
+                    {% set available_count = area_data.num_available %}
+                    <div class="area-container">
+                        <h3 class="area-title">{{ defs.name }} (잔여: {{ available_count }}개 / {{ total_count }}개)</h3>
+                        <div class="site-list">
+                            {% if area_key in ['area_d', 'area_e'] %}
+                                {% if site_list_full_names %}
+                                    {% for site_name in site_list_full_names | sort %}
+                                        {% set site_number_only = site_name | replace('D','') | replace('E','') %}
+                                        {% set site_num_to_display = "%02d" | format(site_number_only | int) %}
+                                        {% set status_class = "text-available" if site_name in area_data.available else ("text-unavailable" if site_name in area_data.unavailable else "") %}
+                                        <div class="site-item {{ status_class }}">{{ site_num_to_display }}</div>
+                                    {% endfor %}
+                                {% else %}
+                                    <p style="color:#6c757d; font-style: italic;">해당 구역의 사이트 정보를 찾을 수 없습니다.</p>
+                                {% endif %}
+                            {% else %}
+                                {% set max_num = area_data.max_site_num %}
+                                {% if max_num > 0 %}
+                                    {% for i in range(1, max_num + 1) %}
+                                        {% set site_num_for_comparison = i|string %}
+                                        {% set site_num_to_display = "%02d" | format(i) %}
+                                        {% set status_class = "text-available" if site_num_for_comparison in area_data.available else ("text-unavailable" if site_num_for_comparison in area_data.unavailable else "") %}
+                                        <div class="site-item {{ status_class }}">{{ site_num_to_display }}</div>
+                                    {% endfor %}
+                                {% else %}
+                                    <p style="color:#6c757d; font-style: italic;">해당 구역의 사이트 정보를 찾을 수 없습니다.</p>
+                                {% endif %}
+                            {% endif %}
+                        </div>
+                    </div>
+                {% endfor %}
+
+            {% elif selected_camp_key == 'yeongdo' %}
+                {# ---- 영도 ---- #}
+                {% set labels = {'caravan':'카라반', 'auto':'오토', 'general':'일반'} %}
+                {% for key in ['caravan','auto','general'] %}
+                    {% set area = camp.areas[key] %}
+                    {% set total_count = area.total if area.total else (area.available|length + area.unavailable|length) %}
+                    {% set all_sites = (area.available + area.unavailable) | unique | sort %}
+                    <div class="area-container">
+                        <h3 class="area-title">{{ labels[key] }} (잔여: {{ area.num_available }}개 / {{ total_count }}개)</h3>
+                        <div class="site-list">
+                            {% if all_sites %}
+                                {% for sid in all_sites %}
+                                  <div class="site-item {{ 'text-available' if sid in area.available else ('text-unavailable' if sid in area.unavailable else '') }}">
+                                    {{ "%02d"|format(sid|int) if sid|string|length <= 2 else sid }}
+                                  </div>
+                                {% endfor %}
+                            {% else %}
+                                <p style="color:#6c757d; font-style: italic;">해당 구역의 사이트 정보를 찾을 수 없습니다.</p>
+                            {% endif %}
+                        </div>
+                    </div>
+                {% endfor %}
+                
+            {% elif selected_camp_key == 'busan_port' %}
+                {# ---- 부산항 (UI만, 현재 탭 비활성화/안내) ---- #}
+                {% set labels = {'auto':'오토사이트', 'deck':'데크사이트'} %}
+                {% for key in ['auto','deck'] %}
+                    {% set area = camp.areas.get(key) %}
+                    {% if area %}
+                        {% set total_count = area.total if area.total else (area.available|length + area.unavailable|length) %}
+                        {% set all_sites = (area.available + area.unavailable) | unique | sort %}
+                        <div class="area-container">
+                            <h3 class="area-title">
+                                {{ labels[key] }} (잔여: {{ area.num_available }}개{% if total_count %} / {{ total_count }}개{% endif %})
+                            </h3>
+                            <div class="site-list">
+                                {% if all_sites %}
+                                    {% for sid in all_sites %}
+                                        <div class="site-item {{ 'text-available' if sid in area.available else ('text-unavailable' if sid in area.unavailable else '') }}">{{ sid }}</div>
+                                    {% endfor %}
+                                {% else %}
+                                    <p style="color:#6c757d; font-style: italic;">해당 구역의 사이트 정보를 찾을 수 없습니다.</p>
+                                {% endif %}
+                            </div>
+                        </div>
+                    {% else %}
+                        <div class="area-container">
+                            <h3 class="area-title">{{ labels[key] }}</h3>
+                            <p style="color:#6c757d; font-style: italic;">데이터 없음</p>
+                        </div>
+                    {% endif %}
+                {% endfor %}
+                
+            {% elif selected_camp_key == 'gudeok' %}
+                {# ---- 구덕 (야영장별 그룹화) ---- #}
+                {% set area = camp.areas['deck'] %}
+
+                {# 고정 좌석 구성 #}
+                {% set group_defs = [
+                    {'label':'1 야영장', 'sites':['1-1','1-2']},
+                    {'label':'2 야영장', 'sites':['2-1','2-2','2-3','2-4']},
+                    {'label':'3 야영장', 'sites':['3-1','3-2','3-3']},
+                    {'label':'4 야영장', 'sites':['4-1','4-2','4-3']},
+                    {'label':'5 야영장', 'sites':['5-1','5-2','5-3','5-4']},
+                    {'label':'6 야영장', 'sites':['6-1','6-2']},
+                ] %}
+
+                {% for grp in group_defs %}
+                    {% set ns = namespace(av=0) %}
+                    {% for sid in grp.sites %}
+                        {% if sid in area.available %}{% set ns.av = ns.av + 1 %}{% endif %}
+                    {% endfor %}
+
+                    <div class="area-container">
+                        <h3 class="area-title">
+                            {{ grp.label }} (잔여: {{ ns.av }}개 / {{ grp.sites|length }}개)
+                        </h3>
+                        <div class="site-list">
+                            {% for sid in grp.sites %}
+                                {# available / unavailable / (미확인 시 기본 스타일) #}
+                                {% set status_class = 'text-available' if sid in area.available
+                                    else ('text-unavailable' if sid in area.unavailable else '') %}
+                                <div class="site-item {{ status_class }}">{{ sid }}</div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                {% endfor %}
+
+            {% else %}
+                <p>표시할 캠핑장 정보가 없습니다.</p>
+            {% endif %}
+
+        {% endif %}
+    </div>
+    {% endfor %}
+
+    <script>
+        function formatDate(date) {
+            const y = date.getFullYear();
+            const m = String(date.getMonth() + 1).padStart(2, '0'); 
+            const d = String(date.getDate()).padStart(2, '0');
+            return `${y}-${m}-${d}`;
+        }
+        function setTodayAndSubmit() {
+            document.getElementById('resdate').value = formatDate(new Date());
+            document.getElementById('dateForm').submit();
+        }
+        function moveDate(dayChange) {
+            const input = document.getElementById('resdate');
+            const [yy, mm, dd] = input.value.split('-').map(v=>parseInt(v,10));
+            const dt = new Date(yy, mm-1, dd);
+            dt.setDate(dt.getDate() + dayChange);
+            input.value = formatDate(dt);
+            document.getElementById('dateForm').submit();
+        }
+        function openReservationLink() {
+            const key = document.getElementById('campTabInput').value;
+            const d = document.getElementById('resdate').value;
+            let url_base;
+            if (key === 'daejeo') {
+                url_base = "https://www.daejeocamping.com/reservation/real_time?resdate=";
+            } else if (key === 'hwamyeong') {
+                url_base = "https://hwamyungcamping.com/reservation/real_time?resdate=";
+            } else if (key === 'yeongdo') {
+                window.open("https://www.yeongdo.go.kr/marinocamping/00003/00015/00028.web", "_blank"); return;
+            } else if (key === 'busan_port') {
+                alert("부산항 탭은 현재 안정화 작업 중입니다."); return;
+            } else if (key === 'gudeok') {
+                window.open("https://gudeok.go.kr/rent_camp01.php", "_blank"); return;
+
+            } else { // samnak 등
+                url_base = "https://www.nakdongcamping.com/reservation/real_time?resdate=";
+            }
+            const reservationUrl = url_base + d + "&schGugun=1&price=0&bagprice=2000&allprice=0&percnt=0&g-recaptcha-response=";
+            window.open(reservationUrl, '_blank');
+        }
+        function switchCamp(campKey) {
+            if (campKey === 'busan_port') return; // 비활성
+            document.getElementById('campTabInput').value = campKey;
+            document.getElementById('dateForm').submit();
+        }
+    </script>
+</body>
+</html>
