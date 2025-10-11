@@ -559,6 +559,10 @@ def fetch_gudeok_sites(selected_date: str, headless: bool = True, wait_sec: int 
       4) '다 음' 클릭하여 rent_camp02.php로 이동
       5) <select name="camp_num"> 옵션에서 disabled 여부로 가능/불가 판정
     """
+
+    if not page_url:
+        raise ValueError("yeongdo.url_page is empty")
+
     start_str = selected_date
     end_str = (datetime.strptime(selected_date, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
     page_url = CAMPING_TABS['gudeok']['url_page']
@@ -818,6 +822,10 @@ def fetch_yeongdo_via_selenium_dateclick(selected_date: str, page_url: str, head
 
 # ===== 영도 크롤러 엔트리 (GET/POST → 실패 시 Selenium 폴백) =====
 def fetch_yeongdo(selected_date: str, page_url: str):
+
+    if not page_url:
+        raise ValueError("yeongdo.url_page is empty")
+    
     sess = requests.Session()
     headers = {
         "User-Agent": (
