@@ -942,7 +942,10 @@ def home():
 
         # 1) 구덕
         elif camp_info.get("is_gudeok") and DISABLE_SCRAPERS:
-            parsed = fetch_gudeok_sites(selected_date, headless=True, wait_sec=20)
+            page_url = camp_info.get('url_page', '')
+            if not page_url:
+                raise ValueError("gudeok.url_page is empty")
+            parsed = fetch_gudeok_sites(selected_date, page_url, headless=True, wait_sec=20)
             camping_data.append({
                 "name": camp_info["name"],
                 "areas": parsed,
@@ -951,7 +954,10 @@ def home():
 
         # 2) 영도
         elif camp_info.get("is_yeongdo") and DISABLE_SCRAPERS:
-            parsed = fetch_yeongdo(selected_date, CAMPING_TABS['yeongdo']['url_page'])
+            page_url = camp_info.get('url_page', '')
+            if not page_url:
+                raise ValueError("yeongdo.url_page is empty")
+            parsed = fetch_yeongdo(selected_date, page_url)
             if not parsed:
                 camping_data.append({
                     "name": camp_info["name"],
