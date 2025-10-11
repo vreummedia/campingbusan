@@ -7,6 +7,7 @@ import re
 import time
 import requests
 import tempfile
+import shutil
 from uuid import uuid4
 
 from bs4 import BeautifulSoup
@@ -47,46 +48,43 @@ from uuid import uuid4
 from selenium.webdriver.chrome.service import Service
 
 def _new_driver(headless: bool = True, window: str = "1280,1600") -> webdriver.Chrome:
-    """
-    Render 등 서버 환경에서 충돌 없이 안정적으로 크롬을 띄우는 공통 유틸.
-    - 매 세션마다 고유한 user-data-dir / cache 디렉토리 사용
-    - /dev/shm 문제 회피
-    - 환경변수에 지정된 크롬/드라이버 바이너리 사용(있을 때)
-    """
-    # 고유 임시 디렉토리들
-    user_data_dir = tempfile.mkdtemp(prefix="chrome_user_")
-    data_dir      = tempfile.mkdtemp(prefix="chrome_data_")
-    cache_dir     = tempfile.mkdtemp(prefix="chrome_cache_")
-
     opts = Options()
     if headless:
         opts.add_argument("--headless=new")
     opts.add_argument("--no-sandbox")
+    opts.add_argument("--disable-dev-shm-usage")  # 컨테이너 환경 안정화
     opts.add_argument("--disable-gpu")
-    opts.add_argument("--disable-dev-shm-usage")        # 컨테이너 /dev/shm 이슈 회피
-    opts.add_argument("--disable-features=Translate,BackForwardCache")
-    opts.add_argument("--no-first-run")
-    opts.add_argument("--no-default-browser-check")
     opts.add_argument("--lang=ko-KR")
     opts.add_argument(f"--window-size={window}")
-    # 고유 프로필/캐시 경로 지정 → "already in use" 회피
-    opts.add_argument(f"--user-data-dir={user_data_dir}")
+    opts.add_argument("--remote-debugging-port=0")  # 포트 충돌 방지
+
+    # ── 실행마다 고유 프로필/데이터/캐시 디렉토리 ──
+    profile_dir = tempfile.mkdtemp(prefix="chrome-profile-")
+    data_dir = os.path.join(profile_dir, "data")
+    cache_dir = os.path.join(profile_dir, "cache")
+    os.makedirs(data_dir, exist_ok=True)
+    os.makedirs(cache_dir, exist_ok=True)
+    opts.add_argument(f"--user-data-dir={profile_dir}")
     opts.add_argument(f"--data-path={data_dir}")
     opts.add_argument(f"--disk-cache-dir={cache_dir}")
-    opts.add_argument(f"--profile-directory=Profile-{uuid4()}")
 
-    # Render 등에서 제공하는 바이너리 경로를 쓰도록 (설정되어 있을 때만)
+    # Render 환경변수 경로 지원
     chrome_bin = os.environ.get("GOOGLE_CHROME_BIN")
     if chrome_bin:
         opts.binary_location = chrome_bin
 
-    chromedriver_path = os.environ.get("CHROMEDRIVER_PATH")  # ex) /usr/bin/chromedriver
-    if chromedriver_path:
-        service = Service(executable_path=chromedriver_path)
-        return webdriver.Chrome(service=service, options=opts)
+    driver_path = os.environ.get("CHROMEDRIVER_PATH")
+    if driver_path:
+        from selenium.webdriver.chrome.service import Service
+        service = Service(executable_path=driver_path)
+        driver = webdriver.Chrome(service=service, options=opts)
     else:
-        # 로컬처럼 PATH에 chromedriver가 있으면 그대로
-        return webdriver.Chrome(options=opts)
+        driver = webdriver.Chrome(options=opts)
+
+    # 정리용 경로 저장 (finally에서 rmtree)
+    driver.temp_profile_dir = profile_dir
+    return driver
+
 
 # 어딘가 공용 utils 근처에
 def _dismiss_alert_if_any(driver):
@@ -472,6 +470,13 @@ def fetch_busan_port(selected_date: str, headless: bool = True, wait_sec: int = 
             driver.quit()
         except Exception:
             pass
+        # 임시 프로필/캐시 정리 (충돌 예방, 용량 누수 방지)
+        try:
+            if hasattr(driver, "temp_profile_dir"):
+                shutil.rmtree(driver.temp_profile_dir, ignore_errors=True)
+        except Exception:
+            pass
+
 
 
 # ===== 영도 버튼 파서 =====
@@ -660,6 +665,12 @@ def fetch_gudeok_sites(selected_date: str, headless: bool = True, wait_sec: int 
             driver.quit()
         except Exception:
             pass
+        # 임시 프로필/캐시 정리 (충돌 예방, 용량 누수 방지)
+        try:
+            if hasattr(driver, "temp_profile_dir"):
+                shutil.rmtree(driver.temp_profile_dir, ignore_errors=True)
+        except Exception:
+            pass
 
 # ===== 영도: 셀레니움(날짜 클릭 → 라디오 전환) =====
 def fetch_yeongdo_via_selenium_dateclick(selected_date: str, page_url: str, headless: bool = True, wait_sec: int = 20):
@@ -783,6 +794,12 @@ def fetch_yeongdo_via_selenium_dateclick(selected_date: str, page_url: str, head
     finally:
         try:
             driver.quit()
+        except Exception:
+            pass
+        # 임시 프로필/캐시 정리 (충돌 예방, 용량 누수 방지)
+        try:
+            if hasattr(driver, "temp_profile_dir"):
+                shutil.rmtree(driver.temp_profile_dir, ignore_errors=True)
         except Exception:
             pass
 
