@@ -30,6 +30,8 @@ app = Flask(
     static_url_path='/static'
 )
 
+DISABLE_SCRAPERS = os.getenv("DISABLE_SCRAPERS") == "1"
+
 # ─────────────────────────────────────────────────────────
 
 def _accept_any_alert(driver, timeout=2):
@@ -94,6 +96,8 @@ def _new_driver(headless: bool = True, window: str = "1280,1600") -> webdriver.C
 
     driver.temp_profile_dir = profile_dir
     return driver
+
+
 
 # 어딘가 공용 utils 근처에
 def _dismiss_alert_if_any(driver):
@@ -929,7 +933,7 @@ def home():
 
 
         # 1) 구덕
-        elif camp_info.get("is_gudeok"):
+        elif camp_info.get("is_gudeok") and DISABLE_SCRAPERS:
             parsed = fetch_gudeok_sites(selected_date, headless=True, wait_sec=20)
             camping_data.append({
                 "name": camp_info["name"],
@@ -938,7 +942,7 @@ def home():
             })
 
         # 2) 영도
-        elif camp_info.get("is_yeongdo"):
+        elif camp_info.get("is_yeongdo") and DISABLE_SCRAPERS:
             parsed = fetch_yeongdo(selected_date, CAMPING_TABS['yeongdo']['url_page'])
             if not parsed:
                 camping_data.append({
@@ -1092,4 +1096,3 @@ def home():
 
 if __name__ == "__main__":
     app.run(debug=True, use_reloader=False, threaded=False)
-
