@@ -52,13 +52,25 @@ def _new_driver(headless: bool = True, window: str = "1280,1600") -> webdriver.C
     if headless:
         opts.add_argument("--headless=new")
     opts.add_argument("--no-sandbox")
-    opts.add_argument("--disable-dev-shm-usage")  # 컨테이너 환경 안정화
+    opts.add_argument("--disable-dev-shm-usage")
     opts.add_argument("--disable-gpu")
     opts.add_argument("--lang=ko-KR")
     opts.add_argument(f"--window-size={window}")
-    opts.add_argument("--remote-debugging-port=0")  # 포트 충돌 방지
+    opts.add_argument("--remote-debugging-port=0")
 
-    # ── 실행마다 고유 프로필/데이터/캐시 디렉토리 ──
+    # 컨테이너/무디스플레이 환경 안정화 플래그
+    opts.add_argument("--no-first-run")
+    opts.add_argument("--no-default-browser-check")
+    opts.add_argument("--disable-software-rasterizer")
+    opts.add_argument("--disable-features=TranslateUI")
+    opts.add_argument("--single-process")
+    opts.add_argument("--no-zygote")
+    # UA 맞춰주기(봇 차단 약화에 도움)
+    opts.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                      "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+
+    # 실행마다 고유 프로필/캐시 디렉토리(이미 적용한 구조 유지)
+    import tempfile, shutil, os
     profile_dir = tempfile.mkdtemp(prefix="chrome-profile-")
     data_dir = os.path.join(profile_dir, "data")
     cache_dir = os.path.join(profile_dir, "cache")
@@ -68,7 +80,6 @@ def _new_driver(headless: bool = True, window: str = "1280,1600") -> webdriver.C
     opts.add_argument(f"--data-path={data_dir}")
     opts.add_argument(f"--disk-cache-dir={cache_dir}")
 
-    # Render 환경변수 경로 지원
     chrome_bin = os.environ.get("GOOGLE_CHROME_BIN")
     if chrome_bin:
         opts.binary_location = chrome_bin
@@ -81,10 +92,8 @@ def _new_driver(headless: bool = True, window: str = "1280,1600") -> webdriver.C
     else:
         driver = webdriver.Chrome(options=opts)
 
-    # 정리용 경로 저장 (finally에서 rmtree)
     driver.temp_profile_dir = profile_dir
     return driver
-
 
 # 어딘가 공용 utils 근처에
 def _dismiss_alert_if_any(driver):
@@ -1083,3 +1092,4 @@ def home():
 
 if __name__ == "__main__":
     app.run(debug=True, use_reloader=False, threaded=False)
+
