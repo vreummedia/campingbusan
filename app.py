@@ -6,12 +6,16 @@ import os
 import re
 import time
 import requests
+import tempfile
+from uuid import uuid4
+
 from bs4 import BeautifulSoup
 from datetime import date, datetime, timedelta
 from urllib.parse import urljoin
 
 # Selenium
 from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -37,17 +41,61 @@ def _accept_any_alert(driver, timeout=2):
     except TimeoutException:
         return ""
     
+# 맨 위 import 근처에 추가
+import tempfile
+from uuid import uuid4
+from selenium.webdriver.chrome.service import Service
+
 def _new_driver(headless: bool = True, window: str = "1280,1600") -> webdriver.Chrome:
+    """
+    Render 등 서버 환경에서 충돌 없이 안정적으로 크롬을 띄우는 공통 유틸.
+    - 매 세션마다 고유한 user-data-dir / cache 디렉토리 사용
+    - /dev/shm 문제 회피
+    - 환경변수에 지정된 크롬/드라이버 바이너리 사용(있을 때)
+    """
+    # 고유 임시 디렉토리들
+    user_data_dir = tempfile.mkdtemp(prefix="chrome_user_")
+    data_dir      = tempfile.mkdtemp(prefix="chrome_data_")
+    cache_dir     = tempfile.mkdtemp(prefix="chrome_cache_")
+
     opts = Options()
     if headless:
         opts.add_argument("--headless=new")
     opts.add_argument("--no-sandbox")
     opts.add_argument("--disable-gpu")
+    opts.add_argument("--disable-dev-shm-usage")        # 컨테이너 /dev/shm 이슈 회피
+    opts.add_argument("--disable-features=Translate,BackForwardCache")
+    opts.add_argument("--no-first-run")
+    opts.add_argument("--no-default-browser-check")
     opts.add_argument("--lang=ko-KR")
     opts.add_argument(f"--window-size={window}")
-    opts.add_argument("--user-agent=Mozilla/5.0 ... Chrome/122 Safari/537.36")
-    opts.set_capability("unhandledPromptBehavior", "dismiss")   # 또는 "accept"
-    return webdriver.Chrome(options=opts)
+    # 고유 프로필/캐시 경로 지정 → "already in use" 회피
+    opts.add_argument(f"--user-data-dir={user_data_dir}")
+    opts.add_argument(f"--data-path={data_dir}")
+    opts.add_argument(f"--disk-cache-dir={cache_dir}")
+    opts.add_argument(f"--profile-directory=Profile-{uuid4()}")
+
+    # Render 등에서 제공하는 바이너리 경로를 쓰도록 (설정되어 있을 때만)
+    chrome_bin = os.environ.get("GOOGLE_CHROME_BIN")
+    if chrome_bin:
+        opts.binary_location = chrome_bin
+
+    chromedriver_path = os.environ.get("CHROMEDRIVER_PATH")  # ex) /usr/bin/chromedriver
+    if chromedriver_path:
+        service = Service(executable_path=chromedriver_path)
+        return webdriver.Chrome(service=service, options=opts)
+    else:
+        # 로컬처럼 PATH에 chromedriver가 있으면 그대로
+        return webdriver.Chrome(options=opts)
+
+# 어딘가 공용 utils 근처에
+def _dismiss_alert_if_any(driver):
+    try:
+        al = driver.switch_to.alert
+        al.dismiss()
+    except Exception:
+        pass
+
 
 # ── 각 탭별 지도/요금표 데이터 ─────────────────────────
 def build_media(key: str):
@@ -360,6 +408,7 @@ def fetch_busan_port(selected_date: str, headless: bool = True, wait_sec: int = 
         # 1) 부산항 공홈 → 예약 바로가기 버튼(내부 JS) 호출
         page_url = CAMPING_TABS["busan_port"]["url_page"]
         driver.get(page_url)
+        _dismiss_alert_if_any(driver)
         wait = WebDriverWait(driver, wait_sec)
 
         # 예약 바로가기 버튼 시도 (fnTicketBooking)
@@ -512,6 +561,7 @@ def fetch_gudeok_sites(selected_date: str, headless: bool = True, wait_sec: int 
 
     try:
         driver.get(page_url)
+        _dismiss_alert_if_any(driver)
         wait = WebDriverWait(driver, wait_sec)
 
         # 1) 전체동의
@@ -617,6 +667,7 @@ def fetch_yeongdo_via_selenium_dateclick(selected_date: str, page_url: str, head
 
     try:
         driver.get(page_url)
+        _dismiss_alert_if_any(driver)
         wait = WebDriverWait(driver, wait_sec)
 
         # 날짜 셀 도달/클릭
