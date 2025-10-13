@@ -56,12 +56,19 @@ def _new_driver(headless: bool = True, window: str = "1280,1600") -> webdriver.C
     opts.add_argument(f"--window-size={window}")
     opts.add_argument("--remote-debugging-port=0")
 
-    # 컨테이너/무디스플레이 환경 안정화 플래그
+    # 안정화 플래그 보강
     opts.add_argument("--no-first-run")
     opts.add_argument("--no-default-browser-check")
     opts.add_argument("--disable-software-rasterizer")
     opts.add_argument("--disable-features=TranslateUI")
-    # UA 맞춰주기(봇 차단 약화에 도움)
+    opts.add_argument("--disable-notifications")
+    opts.add_argument("--disable-popup-blocking")
+    opts.add_argument("--disable-extensions")
+    opts.add_argument("--disable-background-timer-throttling")
+    opts.add_argument("--disable-backgrounding-occluded-windows")
+    opts.add_argument("--disable-renderer-backgrounding")
+
+    # UA (그대로)
     opts.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                       "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 
@@ -549,24 +556,15 @@ def fetch_gudeok_sites_with_retry(selected_date: str, page_url: str | None = Non
         return fetch_gudeok_sites(selected_date=selected_date, page_url=page_url, headless=True, wait_sec=25)
     except WebDriverException:
         # 첫 트라이 실패 시 짧게 쉬고 새 드라이버로 재시도
-        time.sleep(0.8)
+        time.sleep(1.5)
         return fetch_gudeok_sites(selected_date=selected_date, page_url=page_url, headless=True, wait_sec=30)
 
 def fetch_gudeok_sites(
     selected_date: str,
     page_url: str | None = None,
     headless: bool = True,
-    wait_sec: int = 20
+    wait_sec: int = 25
 ):
-    """
-    흐름:
-      1) 전체동의 체크
-      2) 입실일(sdate) 팝업 → '신청'
-      3) 퇴실일(edate) 팝업 → '신청' (입실일 + 1일)
-      4) '다 음' → rent_camp02.php 이동
-      5) select[name="camp_num"] 의 option disabled 여부로 가능/불가 판정
-    """
-    # ✅ page_url 정리 (기본값)
     if not page_url:
         page_url = CAMPING_TABS['gudeok']['url_page']
 
@@ -576,7 +574,6 @@ def fetch_gudeok_sites(
     driver = _new_driver(headless=headless, window="1280,1600")
 
     def _switch_back(base_handle):
-        # 팝업 클릭 후 원창으로 복귀 (닫혔든 안닫혔든 원창으로 스위치)
         for _ in range(10):
             try:
                 if base_handle in driver.window_handles:
@@ -586,82 +583,129 @@ def fetch_gudeok_sites(
                 pass
             time.sleep(0.2)
 
+    def try_js_set_dates() -> bool:
+        """
+        팝업 없이 직접 sdate/edate 주입 후 '다 음' 진행 시도.
+        성공하면 True 반환.
+        """
+        try:
+            # 입력 필드가 readonly여도 value 주입 + 이벤트 발생으로 먹히는 사이트가 많음
+            driver.execute_script("""
+                const s = document.getElementById('sdate');
+                const e = document.getElementById('edate');
+                if (!s || !e) return false;
+                s.removeAttribute('readonly'); e.removeAttribute('readonly');
+                s.value = arguments[0]; e.value = arguments[1];
+                s.dispatchEvent(new Event('input', {bubbles:true}));
+                s.dispatchEvent(new Event('change', {bubbles:true}));
+                e.dispatchEvent(new Event('input', {bubbles:true}));
+                e.dispatchEvent(new Event('change', {bubbles:true}));
+                return true;
+            """, start_str, end_str)
+
+            # 전체동의 체크 (가능하면)
+            try:
+                agree = driver.find_element(By.CSS_SELECTOR, "input.selectAllC")
+                driver.execute_script("arguments[0].click();", agree)
+                time.sleep(0.2)
+            except Exception:
+                pass
+
+            # '다 음' 클릭 트라이
+            for xp in [
+                "//span[contains(normalize-space(.),'다 음')]",
+                "//button[contains(normalize-space(.),'다 음')]",
+                "//a[contains(normalize-space(.),'다 음')]",
+                "//input[@type='submit' and @value='다 음']",
+            ]:
+                btns = driver.find_elements(By.XPATH, xp)
+                if btns:
+                    try:
+                        btns[0].click()
+                    except Exception:
+                        driver.execute_script("arguments[0].click();", btns[0])
+                    break
+            # 다음 페이지 로딩 확인
+            WebDriverWait(driver, 10).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, 'select[name="camp_num"]'))
+            )
+            return True
+        except Exception:
+            return False
+
     try:
         driver.get(page_url)
         _dismiss_alert_if_any(driver)
         wait = WebDriverWait(driver, wait_sec)
 
-        # 1) 전체동의
-        try:
-            agree = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "input.selectAllC")))
-            if not agree.is_selected():
-                driver.execute_script("arguments[0].click();", agree)
-            time.sleep(0.2)
-        except Exception:
-            pass
-
-        # 2-3) 날짜 팝업 선택 유틸
-        def pick_date(input_id: str, date_str: str):
-            base = driver.current_window_handle
-            before = set(driver.window_handles)
-
-            field = wait.until(EC.element_to_be_clickable((By.ID, input_id)))
-            driver.execute_script("arguments[0].click();", field)
-
-            # 팝업 뜰 때까지
-            wait.until(lambda d: len(set(d.window_handles) - before) >= 1)
-            new_handle = list(set(driver.window_handles) - before)[0]
-            driver.switch_to.window(new_handle)
-
-            # '신청' span (onclick="copy('YYYY-MM-DD')")
-            span = wait.until(
-                EC.element_to_be_clickable(
-                    (By.XPATH, f"//span[contains(@onclick, \"copy('{date_str}')\")]")
-                )
-            )
-            driver.execute_script("arguments[0].click();", span)
-            # 보통 클릭 후 팝업이 닫히거나, 원창으로 값이 채워짐
-            _switch_back(base)
-            time.sleep(0.2)
-
-        pick_date("sdate", start_str)
-        pick_date("edate", end_str)
-
-        # 4) '다 음' 버튼 클릭
-        clicked_next = False
-        for xp in [
-            "//span[contains(normalize-space(.),'다 음')]",
-            "//button[contains(normalize-space(.),'다 음')]",
-            "//a[contains(normalize-space(.),'다 음')]",
-            "//input[@type='submit' and @value='다 음']",
-        ]:
+        # 1) 먼저 JS로 날짜 주입 시도
+        if not try_js_set_dates():
+            # 2) 실패 시 팝업 방식 폴백
             try:
-                el = driver.find_element(By.XPATH, xp)
-                driver.execute_script("arguments[0].click();", el)
-                clicked_next = True
-                break
+                agree = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "input.selectAllC")))
+                if not agree.is_selected():
+                    driver.execute_script("arguments[0].click();", agree)
+                time.sleep(0.2)
             except Exception:
-                continue
+                pass
 
-        if not clicked_next:
-            raise RuntimeError("다음 버튼을 찾지 못했습니다.")
+            def pick_date(input_id: str, date_str: str):
+                base = driver.current_window_handle
+                before = set(driver.window_handles)
 
-        # rent_camp02 페이지 로딩 대기
-        wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, 'select[name="camp_num"]')))
+                field = wait.until(EC.element_to_be_clickable((By.ID, input_id)))
+                driver.execute_script("arguments[0].click();", field)
 
-        # 5) 옵션 파싱: disabled면 불가, 아니면 가능
+                # 팝업 창 뜨는 것 확실히 기다림
+                wait.until(lambda d: len(set(d.window_handles) - before) >= 1)
+                new_handle = list(set(driver.window_handles) - before)[0]
+                driver.switch_to.window(new_handle)
+
+                # onclick="copy('YYYY-MM-DD')" 요소 클릭
+                span = WebDriverWait(driver, 15).until(
+                    EC.element_to_be_clickable((By.XPATH, f"//span[contains(@onclick, \"copy('{date_str}')\")]"))
+                )
+                driver.execute_script("arguments[0].click();", span)
+
+                # 원창 복귀
+                _switch_back(base)
+                time.sleep(0.2)
+
+            pick_date("sdate", start_str)
+            pick_date("edate", end_str)
+
+            # '다 음'
+            clicked_next = False
+            for xp in [
+                "//span[contains(normalize-space(.),'다 음')]",
+                "//button[contains(normalize-space(.),'다 음')]",
+                "//a[contains(normalize-space(.),'다 음')]",
+                "//input[@type='submit' and @value='다 음']",
+            ]:
+                try:
+                    el = driver.find_element(By.XPATH, xp)
+                    driver.execute_script("arguments[0].click();", el)
+                    clicked_next = True
+                    break
+                except Exception:
+                    continue
+            if not clicked_next:
+                raise RuntimeError("다음 버튼을 찾지 못했습니다.")
+
+            wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, 'select[name="camp_num"]')))
+
+        # 옵션 파싱
         avail, unavail = [], []
         options = driver.find_elements(By.CSS_SELECTOR, 'select[name="camp_num"] option[value]')
         for op in options:
-            val = op.get_attribute("value") or ""
-            if not val.strip():
-                continue  # '자리 선택' 등 placeholder
+            val = (op.get_attribute("value") or "").strip()
+            if not val:
+                continue
             if op.get_attribute("disabled") is not None:
-                unavail.append(val.strip())
+                unavail.append(val)
             else:
-                avail.append(val.strip())
+                avail.append(val)
 
-        # 정렬(숫자-숫자 형태 정렬을 위해 키 변환)
         def sort_key(v: str):
             a, b = v.split("-")
             try:
@@ -671,7 +715,6 @@ def fetch_gudeok_sites(
 
         avail.sort(key=sort_key)
         unavail.sort(key=sort_key)
-        total = len(avail) + len(unavail)
 
         return {
             "deck": {
@@ -679,20 +722,21 @@ def fetch_gudeok_sites(
                 "unavailable": unavail,
                 "num_available": len(avail),
                 "num_unavailable": len(unavail),
-                "total": total,
+                "total": len(avail) + len(unavail),
             }
         }
+
     finally:
         try:
             driver.quit()
         except Exception:
             pass
-        # 임시 프로필/캐시 정리 (충돌 예방, 용량 누수 방지)
         try:
             if hasattr(driver, "temp_profile_dir"):
                 shutil.rmtree(driver.temp_profile_dir, ignore_errors=True)
         except Exception:
             pass
+
 
 # ===== 영도: 셀레니움(날짜 클릭 → 라디오 전환) =====
 def fetch_yeongdo_via_selenium_dateclick(selected_date: str, page_url: str, headless: bool = True, wait_sec: int = 20):
