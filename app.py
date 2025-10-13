@@ -550,7 +550,7 @@ def parse_yeongdo_buttons(html_soup: BeautifulSoup):
         result[k]["unavailable"].sort()
     return result
 
-def fetch_gudeok_sites(selected_date: str, headless: bool = True, wait_sec: int = 20):
+def fetch_gudeok_sites(selected_date: str, page_url: str, headless: bool = True, wait_sec: int = 20):
     """
     흐름:
       1) 전체동의 체크
@@ -559,15 +559,12 @@ def fetch_gudeok_sites(selected_date: str, headless: bool = True, wait_sec: int 
       4) '다 음' 클릭하여 rent_camp02.php로 이동
       5) <select name="camp_num"> 옵션에서 disabled 여부로 가능/불가 판정
     """
-
     if not page_url:
-        raise ValueError("yeongdo.url_page is empty")
+        raise ValueError("gudeok.url_page is empty")
 
     start_str = selected_date
     end_str = (datetime.strptime(selected_date, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
-    page_url = CAMPING_TABS['gudeok']['url_page']
 
-    # --- 드라이버 준비 ---
     driver = _new_driver(headless=headless, window="1280,1600")
 
     def _switch_back(base_handle):
@@ -939,9 +936,7 @@ def home():
                 "note": "실시간 잔여 좌석은 로그인 후 예약 페이지(인터파크)에서 확인됩니다.",
             })
 
-
-        # 1) 구덕
-        elif camp_info.get("is_gudeok") and DISABLE_SCRAPERS:
+        elif camp_info.get("is_gudeok") and not DISABLE_SCRAPERS:
             page_url = camp_info.get('url_page', '')
             if not page_url:
                 raise ValueError("gudeok.url_page is empty")
@@ -949,11 +944,10 @@ def home():
             camping_data.append({
                 "name": camp_info["name"],
                 "areas": parsed,
-                "media": media,                  # ✅
+                "media": media,
             })
 
-        # 2) 영도
-        elif camp_info.get("is_yeongdo") and DISABLE_SCRAPERS:
+        elif camp_info.get("is_yeongdo") and not DISABLE_SCRAPERS:
             page_url = camp_info.get('url_page', '')
             if not page_url:
                 raise ValueError("yeongdo.url_page is empty")
