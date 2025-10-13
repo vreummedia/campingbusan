@@ -23,6 +23,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
 from selenium.common.exceptions import UnexpectedAlertPresentException
+from selenium.common.exceptions import WebDriverException
 
 app = Flask(
     __name__,
@@ -43,11 +44,6 @@ def _accept_any_alert(driver, timeout=2):
         return txt or ""
     except TimeoutException:
         return ""
-    
-# 맨 위 import 근처에 추가
-import tempfile
-from uuid import uuid4
-from selenium.webdriver.chrome.service import Service
 
 def _new_driver(headless: bool = True, window: str = "1280,1600") -> webdriver.Chrome:
     opts = Options()
@@ -65,8 +61,6 @@ def _new_driver(headless: bool = True, window: str = "1280,1600") -> webdriver.C
     opts.add_argument("--no-default-browser-check")
     opts.add_argument("--disable-software-rasterizer")
     opts.add_argument("--disable-features=TranslateUI")
-    opts.add_argument("--single-process")
-    opts.add_argument("--no-zygote")
     # UA 맞춰주기(봇 차단 약화에 도움)
     opts.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                       "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
@@ -550,17 +544,31 @@ def parse_yeongdo_buttons(html_soup: BeautifulSoup):
         result[k]["unavailable"].sort()
     return result
 
-def fetch_gudeok_sites(selected_date: str, page_url: str, headless: bool = True, wait_sec: int = 20):
+def fetch_gudeok_sites_with_retry(selected_date: str, page_url: str | None = None) -> dict:
+    try:
+        return fetch_gudeok_sites(selected_date=selected_date, page_url=page_url, headless=True, wait_sec=25)
+    except WebDriverException:
+        # 첫 트라이 실패 시 짧게 쉬고 새 드라이버로 재시도
+        time.sleep(0.8)
+        return fetch_gudeok_sites(selected_date=selected_date, page_url=page_url, headless=True, wait_sec=30)
+
+def fetch_gudeok_sites(
+    selected_date: str,
+    page_url: str | None = None,
+    headless: bool = True,
+    wait_sec: int = 20
+):
     """
     흐름:
       1) 전체동의 체크
-      2) 입실일(sdate) 팝업에서 '신청' 클릭 (copy('YYYY-MM-DD'))
-      3) 퇴실일(edate) 팝업에서 '신청' 클릭 (입실일 + 1일)
-      4) '다 음' 클릭하여 rent_camp02.php로 이동
-      5) <select name="camp_num"> 옵션에서 disabled 여부로 가능/불가 판정
+      2) 입실일(sdate) 팝업 → '신청'
+      3) 퇴실일(edate) 팝업 → '신청' (입실일 + 1일)
+      4) '다 음' → rent_camp02.php 이동
+      5) select[name="camp_num"] 의 option disabled 여부로 가능/불가 판정
     """
+    # ✅ page_url 정리 (기본값)
     if not page_url:
-        raise ValueError("gudeok.url_page is empty")
+        page_url = CAMPING_TABS['gudeok']['url_page']
 
     start_str = selected_date
     end_str = (datetime.strptime(selected_date, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
@@ -937,10 +945,10 @@ def home():
             })
 
         elif camp_info.get("is_gudeok") and not DISABLE_SCRAPERS:
-            page_url = camp_info.get('url_page', '')
-            if not page_url:
-                raise ValueError("gudeok.url_page is empty")
-            parsed = fetch_gudeok_sites(selected_date, page_url, headless=True, wait_sec=20)
+            parsed = fetch_gudeok_sites_with_retry(
+                selected_date=selected_date,
+                page_url=camp_info.get('url_page')
+            )
             camping_data.append({
                 "name": camp_info["name"],
                 "areas": parsed,
@@ -1101,11 +1109,10 @@ def home():
         selected_camp_key=selected_camp_key,
     )
 
-
-if __name__ == "__main__":
-    app.run(debug=True, use_reloader=False, threaded=False)
-
 # app.py 맨 아래쯤에 추가
 @app.route("/health")
 def health():
     return "OK", 200
+
+if __name__ == "__main__":
+    app.run(debug=True, use_reloader=False, threaded=False)
