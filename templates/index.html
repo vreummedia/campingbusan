@@ -1,8 +1,6 @@
 <!DOCTYPE html>
 <html lang="ko">
 <head>
-    <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-3914051776943617"
-         crossorigin="anonymous"></script>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>부산 캠핑장 정보</title>
@@ -174,12 +172,66 @@
             max-width: 100%;
           }
         }
-                                 
+        /* 후원 섹션 */
+        .donate-wrap { margin: 18px 0 28px; }
+        .donate-card {
+          background: #fff; border: 1px solid #e9ecef; border-radius: 14px;
+          padding: 16px; box-shadow: 0 4px 10px rgba(0,0,0,.06);
+        }
+        .donate-title { margin: 0 0 6px; font-size: 22px; color: #222; }
+        .donate-desc { margin: 0 0 12px; color: #495057; line-height: 1.6; }
+        .donate-actions { margin: 8px 0 14px; }
+        .donate-button {
+          display: inline-block; padding: 10px 14px; border-radius: 8px;
+          background: #f7e317; color: #111; font-weight: 800; text-decoration: none;
+          border: 1px solid rgba(0,0,0,.08);
+        }
+        .donate-button:hover { filter: brightness(.98); }
+
+        .donate-qr { margin-top: 12px; text-align: center; }
+        .donate-qr img {
+          width: 180px; height: 180px; object-fit: contain; border-radius: 10px;
+          border: 1px solid #eee; background: #fff;
+        }
+        .donate-qr-caption { font-size: 13px; color:#666; margin-top: 6px; }
+
+        .donate-note {
+          margin-top: 12px; font-size: 13px; color: #6c757d; line-height: 1.6;
+        }
+
+        /* 모바일 최적화 */
+        @media (max-width: 480px) {
+          .donate-qr img { width: 160px; height: 160px; }
+        }
+        /* PC 기본: 왼쪽 정렬 */
+        .donate-actions,
+        .donate-qr {
+          text-align: left;
+        }
+
+        /* 모바일(태블릿 포함)에서는 가운데 정렬 */
+        @media (max-width: 768px) {
+          .donate-actions,
+          .donate-qr {
+            text-align: center;
+          }
+          /* 버튼/이미지가 중앙에 예쁘게 오도록 보정 */
+          .donate-button {
+            margin-left: auto;
+            margin-right: auto;
+            display: inline-block;
+          }
+          .donate-qr img {
+            display: block;
+            margin-left: auto;
+            margin-right: auto;
+          }
+        }
+                        
     </style>
 </head>
 <body>
     <h1>부산 캠핑장 실시간 예약 정보</h1>
-
     <form class="date-selector" id="dateForm" method="POST" action="{{ url_for('home') }}">
         <label for="resdate">예약 조회 날짜:</label>
         <button type="button" class="nav-button" onclick="moveDate(-1)">◀</button>
@@ -537,6 +589,27 @@
             document.getElementById('dateForm').submit();
         }
     </script>
+    <!-- 후원하기 섹션 -->
+    <section class="donate-wrap">
+      <div class="donate-card">
+        <h2 class="donate-title">후원하기</h2>
+        <p class="donate-desc">
+          도움이 되셨다면 커피 한 잔 후원해 주세요 ☕️<br>
+          카카오 페이로 안전하게 송금하실 수 있어요.
+        </p>
+        <div class="donate-actions">
+          <!-- 🔗 카카오페이 송금 링크: 실제 복사한 링크로 교체 -->
+          <a class="donate-button" href="https://qr.kakaopay.com/Ej8wCmrfN" target="_blank" rel="noopener noreferrer">
+            카카오 페이로 송금하기
+          </a>
+        </div>
+
+        <!-- QR (데스크톱/태블릿에서 특히 유용) -->
+        <div class="donate-qr">
+          <img src="{{ url_for('static', filename='qrcode_donation.png') }}" alt="카카오페이 송금 QR" />
+          <div class="donate-qr-caption">휴대폰 카메라로 QR을 스캔해 주세요</div>
+        </div>
+      </div>
+    </section>
 </body>
 </html>
-
