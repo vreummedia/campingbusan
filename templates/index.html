@@ -104,7 +104,42 @@
         .area-map-container { display: flex; justify-content: space-around; flex-wrap: nowrap; margin-bottom: 20px; width: 100%; }
         .area-map-container > div { width: 50%; padding: 0 10px; box-sizing: border-box; text-align: center; }
         .area-table-a, .area-table-b { border-collapse: collapse; margin: 10px auto; width: 100%; max-width: 550px; }
-        .area-table-a td, .area-table-b td { border: 1px solid #ccc; padding: 10px 5px; text-align: center; height: 40px; min-width: 40px; box-sizing: border-box; }
+        
+        /* === 삼락 A/B 표 반응형 === */
+        .table-wrap {
+          width: 100%;
+          overflow-x: auto;            /* 아주 작은 화면에서 마지막 안전장치 */
+          -webkit-overflow-scrolling: touch;
+        }
+
+        .area-table-a,
+        .area-table-b {
+          width: 100%;                 /* 컨테이너 폭에 딱 맞게 */
+          max-width: 100%;             /* 더 커지지 않게 */
+          table-layout: fixed;         /* 칸을 균등 분배해서 줄임 */
+          font-size: clamp(11px, 2.6vw, 16px);  /* 화면에 따라 글자 크기도 유연하게 */
+        }
+
+        .area-table-a td,
+        .area-table-b td {
+          min-width: 0;                /* 40px 고정 폭 제거 */
+          height: auto;                /* 고정 높이 제거(내용에 맞춰) */
+          padding: 8px 6px;            /* 기본 패딩 조금 줄이기 */
+          box-sizing: border-box;
+        }
+
+        /* 좁은 폰에서 한 번 더 압축 */
+        @media (max-width: 420px) {
+          .area-table-a td,
+          .area-table-b td {
+            padding: 6px 4px;
+          }
+          .area-table-a,
+          .area-table-b {
+            font-size: clamp(10px, 3.2vw, 14px);
+          }
+        }
+        
         .status-on { background-color: #28a745; color: white; font-weight: bold; }
         .status-off { background-color: #e9ecef; color: black; }
         .status-booked { background-color: #dc3545; color: white; font-weight: bold; }
@@ -137,7 +172,7 @@
             max-width: 100%;
           }
         }
-                                      
+                                 
     </style>
 </head>
 <body>
@@ -226,53 +261,57 @@
                 <div class="area-map-container">
                     <div>
                         <h3>오토 캠핑 SITE A (잔여: {{ available_a }}개 / {{ total_a }}개)</h3>
-                        <table class="area-table-a">
-                            {% set rows = [
-                                ['빈', '07', '06', '05', '04', '03', '02', '01'],
-                                ['08', '빈', '27', '26', '25', '24', '23', '빈'],
-                                ['09', '28', '빈', '빈', '빈', '빈', '빈', '22'],
-                                ['10', '29', '빈', '빈', '빈', '빈', '빈', '21'],
-                                ['11', '30', '빈', '빈', '빈', '빈', '빈', '20'],
-                                ['12', '31', '빈', '빈', '빈', '빈', '빈', '19'],
-                                ['13', '빈', '14', '15', '16', '17', '18', '빈']
-                            ] %}
-                            {% for row in rows %}
-                                <tr>
-                                {% for site_num in row %}
-                                    {% if site_num == '빈' %}
-                                        <td></td>
-                                    {% else %}
-                                        <td class="{% if site_num in camp.areas['area_a'].available %}status-on{% elif site_num in camp.areas['area_a'].unavailable %}status-booked{% else %}status-off{% endif %}">{{ site_num }}</td>
-                                    {% endif %}
+                        <div class="table-wrap">
+                            <table class="area-table-a">
+                                {% set rows = [
+                                    ['빈', '07', '06', '05', '04', '03', '02', '01'],
+                                    ['08', '빈', '27', '26', '25', '24', '23', '빈'],
+                                    ['09', '28', '빈', '빈', '빈', '빈', '빈', '22'],
+                                    ['10', '29', '빈', '빈', '빈', '빈', '빈', '21'],
+                                    ['11', '30', '빈', '빈', '빈', '빈', '빈', '20'],
+                                    ['12', '31', '빈', '빈', '빈', '빈', '빈', '19'],
+                                    ['13', '빈', '14', '15', '16', '17', '18', '빈']
+                                ] %}
+                                {% for row in rows %}
+                                    <tr>
+                                    {% for site_num in row %}
+                                        {% if site_num == '빈' %}
+                                            <td></td>
+                                        {% else %}
+                                            <td class="{% if site_num in camp.areas['area_a'].available %}status-on{% elif site_num in camp.areas['area_a'].unavailable %}status-booked{% else %}status-off{% endif %}">{{ site_num }}</td>
+                                        {% endif %}
+                                    {% endfor %}
+                                    </tr>
                                 {% endfor %}
-                                </tr>
-                            {% endfor %}
-                        </table>
+                            </table>
+                        </div>
                     </div>
                     <div>
                         <h3>오토 캠핑 SITE B (잔여: {{ available_b }}개 / {{ total_b }}개)</h3>
-                        <table class="area-table-b">
-                            {% set rows = [
-                                ['01', '02', '03', '04', '05', '06', '07', '빈'],
-                                ['빈', '23', '24', '25', '26', '27', '빈', '08'],
-                                ['22', '빈', '빈', '빈', '빈', '빈', '28', '09'],
-                                ['21', '빈', '빈', '빈', '빈', '빈', '29', '10'],
-                                ['20', '빈', '빈', '빈', '빈', '빈', '30', '11'],
-                                ['19', '빈', '빈', '빈', '빈', '빈', '31', '12'],
-                                ['빈', '18', '17', '16', '15', '14', '빈', '13']
-                            ] %}
-                            {% for row in rows %}
-                                <tr>
-                                {% for site_num in row %}
-                                    {% if site_num == '빈' %}
-                                        <td></td>
-                                    {% else %}
-                                        <td class="{% if site_num in camp.areas['area_b'].available %}status-on{% elif site_num in camp.areas['area_b'].unavailable %}status-booked{% else %}status-off{% endif %}">{{ site_num }}</td>
-                                    {% endif %}
+                        <div class="table-wrap">
+                            <table class="area-table-b">
+                                {% set rows = [
+                                    ['01', '02', '03', '04', '05', '06', '07', '빈'],
+                                    ['빈', '23', '24', '25', '26', '27', '빈', '08'],
+                                    ['22', '빈', '빈', '빈', '빈', '빈', '28', '09'],
+                                    ['21', '빈', '빈', '빈', '빈', '빈', '29', '10'],
+                                    ['20', '빈', '빈', '빈', '빈', '빈', '30', '11'],
+                                    ['19', '빈', '빈', '빈', '빈', '빈', '31', '12'],
+                                    ['빈', '18', '17', '16', '15', '14', '빈', '13']
+                                ] %}
+                                {% for row in rows %}
+                                    <tr>
+                                    {% for site_num in row %}
+                                        {% if site_num == '빈' %}
+                                            <td></td>
+                                        {% else %}
+                                            <td class="{% if site_num in camp.areas['area_b'].available %}status-on{% elif site_num in camp.areas['area_b'].unavailable %}status-booked{% else %}status-off{% endif %}">{{ site_num }}</td>
+                                        {% endif %}
+                                    {% endfor %}
+                                    </tr>
                                 {% endfor %}
-                                </tr>
-                            {% endfor %}
-                        </table>
+                            </table>
+                        </div>
                     </div>
                 </div>
 
