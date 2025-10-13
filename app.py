@@ -1160,3 +1160,12 @@ def health():
 
 if __name__ == "__main__":
     app.run(debug=True, use_reloader=False, threaded=False)
+
+from flask import Response
+
+@app.route("/ads.txt")
+def ads_txt():
+    # 여기에 본인 퍼블리셔 ID를 넣으세요
+    content = "google.com, pub-3914051776943617, DIRECT, f08c47fec0942fa0"
+    return Response(content, mimetype="text/plain")
+
