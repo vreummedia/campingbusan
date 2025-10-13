@@ -1104,3 +1104,8 @@ def home():
 
 if __name__ == "__main__":
     app.run(debug=True, use_reloader=False, threaded=False)
+
+# app.py 맨 아래쯤에 추가
+@app.route("/health")
+def health():
+    return "OK", 200
