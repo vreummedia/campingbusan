@@ -182,6 +182,7 @@ def build_media(key: str):
 
 # ===== 탭 정의 =====
 CAMPING_TABS = {
+    "all": { "name": "전체", "is_all": True },   # ✅ 추가 (맨 위에)
     "samnak": {
         "name": "삼락",
         "url_base": (
@@ -967,57 +968,38 @@ def home():
 
     selected_date = request.args.get("resdate", today)
     selected_camp_key = request.args.get("camp", "samnak")
-    camp_info = CAMPING_TABS.get(selected_camp_key) or CAMPING_TABS["samnak"]
 
-    camping_data = []
-    media = build_media(selected_camp_key)  # ✅ 항상 먼저 생성
-
-    try:
-        # 0) 부산항(임시 비활성 안내만)
+    def build_one(camp_key: str):
+        camp_info = CAMPING_TABS.get(camp_key)
+        media = build_media(camp_key)
+        # 아래 기존 분기 로직을 camp_info 기준으로 그대로 사용 (내용은 기존 코드에서 복붙)
+        # ─────────────────────────────────────────
+        # 0) 부산항
         if camp_info.get("is_busan_port"):
-            # 좌석 리스트는 아예 제공하지 않고, 요약 숫자만 0으로 세팅
             areas = {
-                "auto": {"available": [], "unavailable": [], "num_available": 0, "total": 0},
-                "deck": {"available": [], "unavailable": [], "num_available": 0, "total": 0},
+                "auto": {"available": [], "unavailable": [], "num_available": 0, "total": 16},
+                "deck": {"available": [], "unavailable": [], "num_available": 0, "total": 24},
             }
-            camping_data.append({
-                "name": camp_info["name"],
-                "areas": areas,
-                "media": media,
-                "error": None,  # 에러 문구 안 보이게
-                "note": "실시간 잔여 좌석은 로그인 후 예약 페이지(인터파크)에서 확인됩니다.",
-            })
+            return {"key": camp_key, "name": camp_info["name"], "areas": areas, "media": media, "error": None}
 
-        elif camp_info.get("is_gudeok") and not DISABLE_SCRAPERS:
+        # 1) 구덕
+        if camp_info.get("is_gudeok") and not DISABLE_SCRAPERS:
             parsed = fetch_gudeok_sites_with_retry(
                 selected_date=selected_date,
                 page_url=camp_info.get('url_page')
             )
-            camping_data.append({
-                "name": camp_info["name"],
-                "areas": parsed,
-                "media": media,
-            })
+            return {"key": camp_key, "name": camp_info["name"], "areas": parsed, "media": media, "error": None}
 
-        elif camp_info.get("is_yeongdo") and not DISABLE_SCRAPERS:
+        # 2) 영도
+        if camp_info.get("is_yeongdo") and not DISABLE_SCRAPERS:
             page_url = camp_info.get('url_page', '')
             if not page_url:
-                raise ValueError("yeongdo.url_page is empty")
+                return {"key": camp_key, "name": camp_info["name"], "areas": {}, "media": media,
+                        "error": "yeongdo.url_page is empty"}
             parsed = fetch_yeongdo(selected_date, page_url)
             if not parsed:
-                camping_data.append({
-                    "name": camp_info["name"],
-                    "areas": {},
-                    "error": "영도 데이터 파싱 실패",
-                    "media": media,
-                })
-                return render_template(
-                    "index.html",
-                    all_camps=camping_data,
-                    selected_date=selected_date,
-                    camp_tabs=CAMPING_TABS,
-                    selected_camp_key=selected_camp_key,
-                )
+                return {"key": camp_key, "name": camp_info["name"], "areas": {}, "media": media,
+                        "error": "영도 데이터 파싱 실패"}
             area_info = {
                 "caravan": {
                     "available": [f"{n:02d}" for n in parsed["caravan"]["available"]],
@@ -1041,109 +1023,87 @@ def home():
                     "total": 12,
                 },
             }
-            camping_data.append({
-                "name": camp_info["name"],
-                "areas": area_info,
-                "media": media,                  # ✅
-            })
+            return {"key": camp_key, "name": camp_info["name"], "areas": area_info, "media": media, "error": None}
 
         # 3) 삼락/대저/화명
-        else:
-            camping_url = (camp_info.get("url_base") or "").format(selected_date)
-            is_hwamyung = camp_info.get("is_hwamyung", False)
+        camping_url = (camp_info.get("url_base") or "").format(selected_date)
+        is_hwamyung = camp_info.get("is_hwamyung", False)
+        try:
             r = requests.get(camping_url, timeout=10)
-
             if r.status_code != 200:
-                camping_data.append({
-                    "name": camp_info["name"],
-                    "error": f"웹사이트 접속 실패: {r.status_code}",
-                    "areas": {},
-                    "media": media,              # ✅
-                })
-            else:
-                soup = BeautifulSoup(r.text, "html.parser")
+                return {"key": camp_key, "name": camp_info["name"], "areas": {}, "media": media,
+                        "error": f"웹사이트 접속 실패: {r.status_code}"}
+            soup = BeautifulSoup(r.text, "html.parser")
+            areas_to_process = ["area_a", "area_b", "area_c", "area_d"]
+            area_info = {}
+            if is_hwamyung:
+                areas_to_process = ["area_a", "area_b", "area_c"]
+                area_info["area_d"] = {"available": [], "unavailable": [], "num_available": 0, "num_unavailable": 0, "max_site_num": 0}
+                area_info["area_e"] = {"available": [], "unavailable": [], "num_available": 0, "num_unavailable": 0, "max_site_num": 0}
+                all_site_numbers_d, all_site_numbers_e = [], []
 
-                areas_to_process = ["area_a", "area_b", "area_c", "area_d"]
-                area_info = {}
+            for area in areas_to_process:
+                available, unavailable, all_nums = [], [], []
+                for a in soup.find_all("a", class_=[area]):
+                    tag = a.find("input", class_="sitename")
+                    site_str = tag.get("value") if tag else None
+                    if not site_str:
+                        continue
+                    try:
+                        all_nums.append(int(site_str))
+                    except ValueError:
+                        continue
+                    cls = a.get("class", [])
+                    if "cbtn_on" in cls:
+                        available.append(site_str)
+                    elif "cbtn_Pcomplete" in cls:
+                        unavailable.append(site_str)
+                area_info[area] = {
+                    "available": available,
+                    "unavailable": unavailable,
+                    "num_available": len(available),
+                    "num_unavailable": len(unavailable),
+                    "max_site_num": max(all_nums) if all_nums else 0,
+                }
 
-                if is_hwamyung:
-                    areas_to_process = ["area_a", "area_b", "area_c"]
-                    area_info["area_d"] = {"available": [], "unavailable": [], "num_available": 0, "num_unavailable": 0, "max_site_num": 0}
-                    area_info["area_e"] = {"available": [], "unavailable": [], "num_available": 0, "num_unavailable": 0, "max_site_num": 0}
-                    all_site_numbers_d, all_site_numbers_e = [], []
+            if is_hwamyung:
+                all_d_sites = soup.find_all("a", class_="area_d")
+                for a in all_d_sites:
+                    nm = (a.contents[0].strip() if a.contents else "")
+                    if not nm: continue
+                    s = nm[1:]
+                    try:
+                        num = int(s)
+                    except ValueError:
+                        num = 0
+                    cls = a.get("class", [])
+                    if nm.startswith("D"):
+                        target = "area_d"
+                    elif nm.startswith("E"):
+                        target = "area_e"
+                    else:
+                        continue
+                    if "cbtn_on" in cls:
+                        area_info[target]["available"].append(nm)
+                    elif "cbtn_Pcomplete" in cls:
+                        area_info[target]["unavailable"].append(nm)
+                for k in ["area_d", "area_e"]:
+                    area_info[k]["num_available"] = len(area_info[k]["available"])
+                    area_info[k]["num_unavailable"] = len(area_info[k]["unavailable"])
 
-                for area in areas_to_process:
-                    available, unavailable, all_nums = [], [], []
-                    for a in soup.find_all("a", class_=[area]):
-                        tag = a.find("input", class_="sitename")
-                        site_str = tag.get("value") if tag else None
-                        if not site_str:
-                            continue
-                        try:
-                            all_nums.append(int(site_str))
-                        except ValueError:
-                            continue
+            return {"key": camp_key, "name": camp_info["name"], "areas": area_info, "media": media, "error": None}
+        except Exception as e:
+            return {"key": camp_key, "name": camp_info["name"], "areas": {}, "media": media,
+                    "error": f"데이터 수집 오류: {e}"}
+        # ─────────────────────────────────────────
 
-                        cls = a.get("class", [])
-                        if "cbtn_on" in cls:
-                            available.append(site_str)
-                        elif "cbtn_Pcomplete" in cls:
-                            unavailable.append(site_str)
+    # ✅ ‘전체’면 모두 순회, 아니면 해당 탭만
+    if selected_camp_key == "all":
+        keys_to_fetch = [k for k in CAMPING_TABS.keys() if k != "all"]
+    else:
+        keys_to_fetch = [selected_camp_key]
 
-                    area_info[area] = {
-                        "available": available,
-                        "unavailable": unavailable,
-                        "num_available": len(available),
-                        "num_unavailable": len(unavailable),
-                        "max_site_num": max(all_nums) if all_nums else 0,
-                    }
-
-                if is_hwamyung:
-                    all_d_sites = soup.find_all("a", class_="area_d")
-                    for a in all_d_sites:
-                        nm = (a.contents[0].strip() if a.contents else "")
-                        if not nm:
-                            continue
-                        s = nm[1:]
-                        try:
-                            num = int(s)
-                        except ValueError:
-                            num = 0
-                        cls = a.get("class", [])
-                        if nm.startswith("D"):
-                            target = "area_d"; all_site_numbers_d.append(num)
-                        elif nm.startswith("E"):
-                            target = "area_e"; all_site_numbers_e.append(num)
-                        else:
-                            continue
-                        if "cbtn_on" in cls:
-                            area_info[target]["available"].append(nm)
-                        elif "cbtn_Pcomplete" in cls:
-                            area_info[target]["unavailable"].append(nm)
-
-                    if all_site_numbers_d:
-                        area_info["area_d"]["max_site_num"] = max(all_site_numbers_d)
-                    if all_site_numbers_e:
-                        area_info["area_e"]["max_site_num"] = max(all_site_numbers_e)
-                    area_info["area_d"]["num_available"] = len(area_info["area_d"]["available"])
-                    area_info["area_d"]["num_unavailable"] = len(area_info["area_d"]["unavailable"])
-                    area_info["area_e"]["num_available"] = len(area_info["area_e"]["available"])
-                    area_info["area_e"]["num_unavailable"] = len(area_info["area_e"]["unavailable"])
-
-                camping_data.append({
-                    "name": camp_info["name"],
-                    "areas": area_info,
-                    "media": media,              # ✅
-                })
-
-    except Exception as e:
-        # 캠프별 문구가 아니라 일반 예외 문구로
-        camping_data.append({
-            "name": camp_info["name"],
-            "error": f"데이터 수집 오류: {e}",
-            "areas": {},
-            "media": media,                      # ✅
-        })
+    camping_data = [build_one(k) for k in keys_to_fetch]
 
     return render_template(
         "index.html",
@@ -1153,6 +1113,7 @@ def home():
         selected_camp_key=selected_camp_key,
     )
 
+
 # app.py 맨 아래쯤에 추가
 @app.route("/health")
 def health():
@@ -1160,12 +1121,3 @@ def health():
 
 if __name__ == "__main__":
     app.run(debug=True, use_reloader=False, threaded=False)
-
-from flask import Response
-
-@app.route("/ads.txt")
-def ads_txt():
-    # 여기에 본인 퍼블리셔 ID를 넣으세요
-    content = "google.com, pub-3914051776943617, DIRECT, f08c47fec0942fa0"
-    return Response(content, mimetype="text/plain")
-
