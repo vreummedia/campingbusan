@@ -21,4 +21,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Render가 PORT 환경변수를 넘겨줍니다. 기본 10000도 허용.
-CMD gunicorn app:app --bind 0.0.0.0:${PORT:-10000} --workers 1 --threads 1 --timeout 120 --graceful-timeout 30
+CMD gunicorn app:app --bind 0.0.0.0:${PORT:-10000} --workers 1 --threads 1 --timeout 150 --graceful-timeout 30
