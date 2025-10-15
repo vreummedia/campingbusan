@@ -912,26 +912,41 @@ def fetch_yeongdo(selected_date: str, page_url: str):
                     continue
                 payload[name] = inp.get("value", "")
 
-            # 날짜 필드 추정
-            set_any = False
-            for sel in ['input[type="date"]', 'input[name*="date"]', 'input[name*="ymd" i]', 'input[name*="Ymd"]']:
-                di = form.select_one(sel)
+            # 날짜 필드 추정 (CSS4 [i] 대신 파이썬에서 소문자 비교)
+            def _find_date_name():
+                # 명시적 date 타입
+                di = form.select_one('input[type="date"]')
                 if di and di.get("name"):
-                    payload[di.get("name")] = selected_date
-                    set_any = True
-                    break
-            if not set_any:
+                    return di.get("name")
+                # name에 'date' 포함
+                for el in form.find_all("input"):
+                    nm = (el.get("name") or "")
+                    if "date" in nm.lower():
+                        return nm
+                # name에 'ymd' 포함 (대소문자 무시)
+                for el in form.find_all("input"):
+                    nm = (el.get("name") or "")
+                    if "ymd" in nm.lower():
+                        return nm
+                return None
+
+            date_name = _find_date_name()
+            if date_name:
+                payload[date_name] = selected_date
+            else:
+                # 백업 키들
                 for guess in ["resdate", "sDate", "useDate", "use_date", "ymd", "riYmd", "selYmd"]:
                     payload[guess] = selected_date
 
             action = form.get("action") or page_url
             post_url = urljoin(page_url, action)
-            r2 = sess.post(post_url, data=payload, headers=headers, timeout=20)
+            r2 = sess.post(post_url, data=payload, headers=headers, timeout=15)
             r2.raise_for_status()
             soup2 = BeautifulSoup(r2.text, "html.parser")
             parsed_post = parse_yeongdo_buttons(soup2)
-    except requests.RequestException:
+    except Exception:
         parsed_post = None
+
 
     def total_available(parsed):
         return sum(len(parsed[k]["available"]) for k in parsed) if parsed else 0
@@ -996,10 +1011,17 @@ def home():
             if not page_url:
                 return {"key": camp_key, "name": camp_info["name"], "areas": {}, "media": media,
                         "error": "yeongdo.url_page is empty"}
-            parsed = fetch_yeongdo(selected_date, page_url)
+
+            try:
+                parsed = fetch_yeongdo(selected_date, page_url)
+            except Exception as e:
+                return {"key": camp_key, "name": camp_info["name"], "areas": {}, "media": media,
+                        "error": f"영도 데이터 수집 오류: {e}"}
+
             if not parsed:
                 return {"key": camp_key, "name": camp_info["name"], "areas": {}, "media": media,
                         "error": "영도 데이터 파싱 실패"}
+
             area_info = {
                 "caravan": {
                     "available": [f"{n:02d}" for n in parsed["caravan"]["available"]],
