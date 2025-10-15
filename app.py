@@ -33,6 +33,102 @@ app = Flask(
 
 DISABLE_SCRAPERS = os.getenv("DISABLE_SCRAPERS") == "1"
 
+
+
+
+from flask import jsonify
+from threading import Thread, Lock, Semaphore
+
+YEONGDO_CACHE = {}          # date -> (data, ts)
+YEONGDO_LOCK = Lock()
+YEONGDO_TTL = 60
+
+# 동시에 여러 개 안 띄우도록 (기본 1~2)
+SELENIUM_SEM = Semaphore(int(os.getenv("YEONGDO_MAX_CONCURRENCY", "2")))
+
+# date(str) -> {"ts": float, "ticks": int}
+INFLIGHT = {}
+INFLIGHT_MAX = int(os.getenv("YEONGDO_INFLIGHT_MAX_SEC", "100"))  # 오래 걸리면 자동 리셋
+PROGRESS_MAX = 60  # (1/60) 표기를 위해
+
+def _cache_get(cache, key, ttl):
+    rec = cache.get(key)
+    if not rec: return None
+    data, ts = rec
+    if time.time() - ts > ttl:
+        cache.pop(key, None)
+        return None
+    return data
+
+def _cache_set(cache, key, data):
+    cache[key] = (data, time.time())
+
+def _progress_ticker(date_key: str):
+    """INFLIGHT[date_key]['ticks'] 를 1초마다 올려서 (n/60) 표시 가능하게."""
+    try:
+        while True:
+            with YEONGDO_LOCK:
+                rec = INFLIGHT.get(date_key)
+                if not rec:
+                    return
+                rec["ticks"] = min(PROGRESS_MAX, rec.get("ticks", 0) + 1)
+                INFLIGHT[date_key] = rec
+            time.sleep(1.0)
+    except Exception:
+        return
+
+def _yeongdo_worker(d, page_url):
+    data = None
+    ticker = None
+    try:
+        # 진행률 티커 시작
+        ticker = Thread(target=_progress_ticker, args=(d,), daemon=True)
+        ticker.start()
+
+        with SELENIUM_SEM:
+            data = fetch_yeongdo(d, page_url)
+    except Exception as e:
+        print(f"[yeongdo][{d}] worker error:", repr(e), flush=True)
+        data = {"error": f"크롤링 실패: {e}"}
+    finally:
+        if not data:
+            data = {"caravan":{"available":[], "unavailable":[]},
+                    "auto":{"available":[], "unavailable":[]},
+                    "general":{"available":[], "unavailable":[]}}
+        with YEONGDO_LOCK:
+            _cache_set(YEONGDO_CACHE, d, data)
+            INFLIGHT.pop(d, None)  # 끝났으니 inflight 제거
+
+
+@app.route("/api/yeongdo")
+def api_yeongdo():
+    d = request.args.get("date") or date.today().strftime("%Y-%m-%d")
+    page_url = CAMPING_TABS["yeongdo"]["url_page"]
+
+    with YEONGDO_LOCK:
+        cached = _cache_get(YEONGDO_CACHE, d, YEONGDO_TTL)
+        if cached is not None:
+            return jsonify({"status": "ready", "date": d, "data": cached})
+
+        # 오래된 inflight 강제 정리
+        now = time.time()
+        rec = INFLIGHT.get(d)
+        if rec and (now - rec.get("ts", now)) > INFLIGHT_MAX:
+            INFLIGHT.pop(d, None)
+            rec = None
+
+        if rec:  # 진행 중
+            tries = int(rec.get("ticks", 0))
+            return jsonify({"status": "pending", "date": d, "tries": tries, "max": PROGRESS_MAX})
+
+        # 새 작업 등록
+        INFLIGHT[d] = {"ts": time.time(), "ticks": 0}
+
+    t = Thread(target=_yeongdo_worker, args=(d, page_url), daemon=True)
+    t.start()
+    return jsonify({"status": "pending", "date": d, "tries": 0, "max": PROGRESS_MAX})
+
+
 # ─────────────────────────────────────────────────────────
 
 def _accept_any_alert(driver, timeout=2):
@@ -94,6 +190,9 @@ def _new_driver(headless: bool = True, window: str = "1280,1600") -> webdriver.C
         driver = webdriver.Chrome(service=service, options=opts)
     else:
         driver = webdriver.Chrome(options=opts)
+
+    driver.set_page_load_timeout(20)
+    driver.set_script_timeout(20)
 
     driver.temp_profile_dir = profile_dir
     return driver
@@ -496,29 +595,90 @@ def fetch_busan_port(selected_date: str, headless: bool = True, wait_sec: int = 
 
 # ===== 영도 버튼 파서 =====
 def parse_yeongdo_buttons(html_soup: BeautifulSoup):
+    """
+    영도 예약 영역에서 '카라반/오토/일반' 사이트 버튼/링크를 파싱.
+    사이트 UI가 button뿐 아니라 a(링크), role=button 엘리먼트를 혼용할 수 있어 모두 대응.
+    상태는 title/aria-label/텍스트/클래스/disabled/aria-disabled 등으로 추정.
+    """
     result = {
         "caravan": {"available": [], "unavailable": []},
         "auto": {"available": [], "unavailable": []},
         "general": {"available": [], "unavailable": []},
     }
 
-    buttons = html_soup.select("button[title]") or html_soup.select("button")
+    # ✅ button + a + role=button 전부 긁기
+    nodes = (html_soup.select("button[title], a[title], [role='button'][title]")
+             or html_soup.select("button, a, [role='button']"))
 
+    # 라벨/숫자 추출
     pat_main = re.compile(r"(카라반|오토사이트|일반사이트)\s*([0-9]+)")
-    pat_alt = re.compile(r"(카라반|오토사이트|오토|일반사이트|일반)\s*.*?([0-9]+)")
+    pat_alt  = re.compile(r"(카라반|오토사이트|오토|일반사이트|일반)\s*.*?([0-9]+)")
 
-    for btn in buttons:
-        title = (btn.get("title") or "").replace(" ", "")
-        status = None
-        if "예약가능" in title or "가능" in title:
-            status = "available"
-        elif "예약불가" in title or "불가" in title or btn.has_attr("disabled"):
-            status = "unavailable"
+    def _get_text(el):
+        # 텍스트 후보: innerText → aria-label → title
+        txt = " ".join(el.stripped_strings)
+        if not txt:
+            txt = (el.get("aria-label") or el.get("title") or "")
+        return (txt or "").strip()
 
-        label = " ".join(btn.stripped_strings)
+    def _status_of(el, label_text):
+        """
+        예약가능/불가 상태 추정:
+        - title/aria-label/텍스트에 '예약가능/불가' 포함
+        - disabled / aria-disabled
+        - class 힌트(on/off/possible/complete/able/sold/gray/green)
+        - (이미지 alt) 보조
+        """
+        title = (el.get("title") or "").strip()
+        aria  = (el.get("aria-label") or "").strip()
+        cls   = (el.get("class") or [])
+        cls_s = " ".join(cls).lower()
+
+        blob = (title + " " + aria + " " + label_text).replace(" ", "")
+        if "예약가능" in blob or "가능" in blob:
+            return "available"
+        if "예약불가" in blob or "불가" in blob:
+            return "unavailable"
+
+        # disabled류
+        if el.has_attr("disabled"):
+            return "unavailable"
+        if (el.get("aria-disabled") or "").lower() in ("true", "1"):
+            return "unavailable"
+
+        # 클래스 힌트
+        if any(k in cls_s for k in ["on", "able", "green", "possible", "avail"]):
+            return "available"
+        if any(k in cls_s for k in ["off", "sold", "complete", "gray", "grey", "unavail"]):
+            return "unavailable"
+
+        # 이미지 alt 힌트
+        try:
+            img = el.select_one("img")
+            if img:
+                alt = (img.get("alt") or "").lower()
+                if "가능" in alt or "green" in alt or "able" in alt:
+                    return "available"
+                if "불가" in alt or "sold" in alt or "gray" in alt or "grey" in alt:
+                    return "unavailable"
+        except Exception:
+            pass
+
+        # 모르면 보수적으로 불가 처리
+        return "unavailable"
+
+    for el in nodes:
+        label = _get_text(el)
+        if not label:
+            continue
+
         m = pat_main.search(label) or pat_alt.search(label)
         if not m:
-            continue
+            # title만 숫자가 있는 경우 대비
+            t = (el.get("title") or "")
+            m = pat_main.search(t) or pat_alt.search(t)
+            if not m:
+                continue
 
         area_ko, num_str = m.group(1), m.group(2)
         try:
@@ -535,22 +695,18 @@ def parse_yeongdo_buttons(html_soup: BeautifulSoup):
         else:
             continue
 
-        if not status:
-            s = (title + label).replace(" ", "")
-            if "예약가능" in s or "가능" in s:
-                status = "available"
-            elif "예약불가" in s or "불가" in s or btn.has_attr("disabled"):
-                status = "unavailable"
-            else:
-                continue
-
+        status = _status_of(el, label)
         bucket = result[key]["available"] if status == "available" else result[key]["unavailable"]
         bucket.append(num)
 
+    # 정렬/중복 제거
     for k in result:
-        result[k]["available"].sort()
-        result[k]["unavailable"].sort()
+        for kk in ("available", "unavailable"):
+            vals = sorted(set(result[k][kk]))
+            result[k][kk] = vals
+
     return result
+
 
 def fetch_gudeok_sites_with_retry(selected_date: str, page_url: str | None = None) -> dict:
     try:
@@ -740,15 +896,106 @@ def fetch_gudeok_sites(
 
 
 # ===== 영도: 셀레니움(날짜 클릭 → 라디오 전환) =====
-def fetch_yeongdo_via_selenium_dateclick(selected_date: str, page_url: str, headless: bool = True, wait_sec: int = 20):
+
+# ===== 영도: 셀레니움(날짜 클릭 → 라디오 전환) =====
+def fetch_yeongdo_via_selenium_dateclick(selected_date: str, page_url: str, headless: bool = True, wait_sec: int = 20, total_max_sec: int = 40):
+    """
+    라디오(카라반/오토/일반) 전환 직후 '현재 화면에 보이는 버튼들'만 긁는다.
+    버튼 텍스트에 '카라반/오토/일반' 라벨이 없으면 현재 탭으로 귀속.
+    """
+    t0 = time.time()
     driver = _new_driver(headless=headless, window="1280,1600")
+    def _extract_visible_items(_driver):
+        """
+        좌석 버튼만(.b1) 긁고, 가시성/상태/라벨+번호를 정확히 판정해서 반환.
+        반환: [{area:'caravan|auto|general|unknown', num:int, state:'available|unavailable'}]
+        """
+        return _driver.execute_script("""
+          const out = [];
+          // 좌석 버튼만
+          const nodes = Array.from(document.querySelectorAll('button.b1, a.b1'));
+          for (const el of nodes) {
+            // 가시성
+            const cs = getComputedStyle(el);
+            if (cs.display === 'none' || cs.visibility === 'hidden' || !el.offsetParent) continue;
+
+            const inner = (el.innerText || '').trim();
+            const title = (el.getAttribute('title') || '').trim();
+            const aria  = (el.getAttribute('aria-label') || '').trim();
+            const txt   = (inner + ' ' + aria).replace(/\\s+/g, ' ').trim();
+
+            // 상태: title/disabled 최우선
+            const disabled = !!el.disabled || String(el.getAttribute('aria-disabled')||'').toLowerCase()==='true';
+            let state = 'unavailable';
+            const blob = (title + ' ' + aria + ' ' + inner).replace(/\\s+/g,'');
+            if (disabled || blob.includes('예약불가') || blob.includes('불가')) {
+              state = 'unavailable';
+            } else if (blob.includes('예약가능') || blob.includes('가능')) {
+              state = 'available';
+            } else {
+              // 타이틀이 비어있는 특수 케이스 대비(그래도 disabled면 불가가 이미 잡힘)
+              state = disabled ? 'unavailable' : 'available';
+            }
+
+            // 라벨+번호: "카라반 12" / "오토 3" / "일반 7"
+            // 공백/개행이 섞이므로 normalize
+            const norm = txt.replace(/\\s+/g, ' ').trim();
+            let area = 'unknown';
+            let num  = null;
+
+            // 한글 라벨 + 번호만 허용 (다른 숫자 잡음 방지)
+            let m = norm.match(/^(카라반|오토사이트|오토|일반사이트|일반)\\s*([0-9]{1,3})\\s*$/);
+            if (m) {
+              const label = m[1];
+              num = parseInt(m[2], 10);
+              if (label === '카라반') area = 'caravan';
+              else if (label === '오토사이트' || label === '오토') area = 'auto';
+              else if (label === '일반사이트' || label === '일반') area = 'general';
+            } else {
+              // 혹시 라벨이 빠졌으면 숫자만 추출 (탭 귀속용)
+              const m2 = norm.match(/\\b([0-9]{1,3})\\b/);
+              if (m2) num = parseInt(m2[1], 10);
+            }
+
+            if (!Number.isInteger(num)) continue;
+
+            out.push({ area, num, state });
+          }
+          return out;
+        """)
+    def _extract_from_any_frame(_driver):
+        """
+        메인 문서 먼저 → 없으면 모든 iframe/frame을 순회해서 .b1 버튼을 추출.
+        """
+        def _safe_extract():
+            try:
+                return _extract_visible_items(_driver) or []
+            except Exception:
+                return []
+
+        # 1) 메인 문서
+        items = _safe_extract()
+        if items:
+            return items
+
+        # 2) 프레임들
+        frames = _driver.find_elements(By.CSS_SELECTOR, "iframe, frame")
+        for fr in frames:
+            try:
+                _driver.switch_to.frame(fr)
+                items = _safe_extract()
+            finally:
+                _driver.switch_to.default_content()
+            if items:
+                return items
+        return []
 
     try:
         driver.get(page_url)
         _dismiss_alert_if_any(driver)
         wait = WebDriverWait(driver, wait_sec)
 
-        # 날짜 셀 도달/클릭
+        # 달력에서 날짜 보이게 만들고 클릭
         def date_cell_exists():
             return len(driver.find_elements(By.CSS_SELECTOR, f'td.date-td[data-date-string="{selected_date}"]')) > 0
 
@@ -756,33 +1003,23 @@ def fetch_yeongdo_via_selenium_dateclick(selected_date: str, page_url: str, head
         while not date_cell_exists() and jumps < 24:
             clicked = False
             for sel in [
-                ".ui-datepicker-next",
-                ".ui-datepicker-next > a",
-                ".btn.next",
-                "button.next",
-                "a.next",
-                ".calendar .next",
-                ".cal-next",
-                ".month-next",
-                'a[title="다음달"]',
-                "button.cal-next",
+                ".ui-datepicker-next", ".ui-datepicker-next > a",
+                ".btn.next", "button.next", "a.next",
+                ".calendar .next", ".cal-next", ".month-next",
+                'a[title="다음달"]', "button.cal-next",
             ]:
                 btns = driver.find_elements(By.CSS_SELECTOR, sel)
                 if btns:
-                    try:
-                        btns[0].click()
-                    except Exception:
-                        driver.execute_script("arguments[0].click();", btns[0])
+                    try: btns[0].click()
+                    except Exception: driver.execute_script("arguments[0].click();", btns[0])
                     clicked = True
                     time.sleep(0.35)
                     break
             if not clicked:
-                driver.execute_script(
-                    """
+                driver.execute_script("""
                     if (typeof goMonth === 'function') { goMonth(1); }
                     else if (typeof nextMonth === 'function') { nextMonth(); }
-                    """
-                )
+                """)
                 time.sleep(0.35)
             jumps += 1
 
@@ -792,83 +1029,209 @@ def fetch_yeongdo_via_selenium_dateclick(selected_date: str, page_url: str, head
             )
             anchor = cell.find_element(By.CSS_SELECTOR, "a") if cell.find_elements(By.CSS_SELECTOR, "a") else cell
             driver.execute_script("arguments[0].scrollIntoView({block:'center'});", anchor)
-            try:
-                anchor.click()
-            except Exception:
-                driver.execute_script("arguments[0].click();", anchor)
+            try: anchor.click()
+            except Exception: driver.execute_script("arguments[0].click();", anchor)
             time.sleep(0.4)
         except TimeoutException:
             pass
 
-        # 라디오 전환 유틸
-        def button_texts():
-            return [el.text for el in driver.find_elements(By.CSS_SELECTOR, "button[title], button")]
-
-        def click_radio_and_wait(id_value: str, value_value: str, keywords: list[str]):
-            before = button_texts()
-            labels = driver.find_elements(By.CSS_SELECTOR, f'label[for="{id_value}"]')
-            if labels:
+        # 라디오 전환 util
+        def click_radio_and_wait(value_value: str, keywords: list[str]):
+            def is_target_checked():
                 try:
-                    labels[0].click()
+                    return driver.execute_script("""
+                        const v = arguments[0];
+                        const r = document.querySelector('input[type="radio"][value="'+v+'"]');
+                        return !!(r && r.checked);
+                    """, value_value)
                 except Exception:
-                    driver.execute_script("arguments[0].click();", labels[0])
-            else:
-                radios = driver.find_elements(By.CSS_SELECTOR, f"input#{id_value}") or driver.find_elements(
-                    By.CSS_SELECTOR, f'input.siteGubun[name="radioStieGubun"][value="{value_value}"]'
-                )
-                if radios:
-                    try:
-                        radios[0].click()
-                    except Exception:
-                        driver.execute_script("arguments[0].click();", radios[0])
-                    driver.execute_script(
-                        """
+                    return False
+
+            if is_target_checked():
+                return
+
+            radios = driver.find_elements(By.CSS_SELECTOR, f'input[type="radio"][value="{value_value}"]')
+            if radios:
+                el = radios[0]
+                try: driver.execute_script("arguments[0].scrollIntoView({block:'center'});", el)
+                except Exception: pass
+                try: el.click()
+                except Exception: driver.execute_script("arguments[0].click();", el)
+                try:
+                    driver.execute_script("""
                         const el = arguments[0];
                         el.checked = true;
                         el.dispatchEvent(new Event('input', {bubbles:true}));
                         el.dispatchEvent(new Event('change', {bubbles:true}));
                         el.dispatchEvent(new Event('click', {bubbles:true}));
-                        """,
-                        radios[0],
-                    )
+                    """, el)
+                except Exception:
+                    pass
+
+            if not is_target_checked():
+                for kw in keywords:
+                    els = driver.find_elements(By.XPATH, f'//label[contains(normalize-space(.),"{kw}")]')
+                    if els:
+                        el = els[0]
+                        try: driver.execute_script("arguments[0].scrollIntoView({block:'center'});", el)
+                        except Exception: pass
+                        try: el.click()
+                        except Exception: driver.execute_script("arguments[0].click();", el)
+                        break
+
+            if not is_target_checked():
+                try:
+                    driver.execute_script("""
+                      (function(v){
+                        try{ if (typeof siteGubunChange==='function') siteGubunChange(v); }catch(e){}
+                        try{ if (typeof fnSiteGubun==='function') fnSiteGubun(v); }catch(e){}
+                        try{ if (typeof changeGubun==='function') changeGubun(v); }catch(e){}
+                        try{ if (typeof fnSearch==='function') fnSearch(); }catch(e){}
+                        const hid = document.querySelector('input[name*="Gubun" i], input[id*="Gubun" i]');
+                        if (hid){ hid.value = v; hid.dispatchEvent(new Event('change', {bubbles:true})); }
+                      })(arguments[0]);
+                    """, value_value)
+                except Exception:
+                    pass
 
             try:
-                WebDriverWait(driver, 8).until(
-                    lambda d: (any(any(k in (t or "") for k in keywords) for t in button_texts()) and button_texts() != before)
+                WebDriverWait(driver, 8).until(lambda d: is_target_checked())
+            except TimeoutException:
+                time.sleep(0.5)
+
+            try:
+                const_before = len(driver.find_elements(By.CSS_SELECTOR, "#siteList button, button, a, [role='button']"))
+                WebDriverWait(driver, 5).until(
+                    lambda d: len(d.find_elements(By.CSS_SELECTOR, "#siteList button, button, a, [role='button']")) != const_before
                 )
             except TimeoutException:
-                time.sleep(0.4)
+                time.sleep(0.2)
+
+        # 이용인원 드롭다운을 적당한 값으로 설정 (안 고르면 리스트가 안 뜨는 경우가 있음)
+        def _pick_person_if_needed():
+            try:
+                # '이용인원' 근처 select 찾기(첫 번째 제대로 된 option 선택)
+                sel = None
+                # id/name 에 person, cnt 같은 키워드가 많은 편이라 느슨하게 탐색
+                for q in [
+                    'select[name*="person" i]', 'select[id*="person" i]',
+                    'select[name*="cnt" i]',    'select[id*="cnt" i]',
+                    'select'
+                ]:
+                    cands = driver.find_elements(By.CSS_SELECTOR, q)
+                    for s in cands:
+                        ops = s.find_elements(By.CSS_SELECTOR, 'option')
+                        # 값 있는 옵션이 1개 이상 있으면 타깃으로 간주
+                        if any((o.get_attribute("value") or "").strip() for o in ops):
+                            sel = s
+                            break
+                    if sel: break
+                if not sel:
+                    return False
+
+                # 첫 번째 "값 있는" 옵션으로 설정 (placeholder는 value가 빈 문자열일 가능성 큼)
+                target = None
+                for o in sel.find_elements(By.TAG_NAME, 'option'):
+                    v = (o.get_attribute('value') or '').strip()
+                    if v:
+                        target = v
+                        break
+                if not target:
+                    return False
+
+                driver.execute_script(
+                    "arguments[0].value = arguments[1];"
+                    "arguments[0].dispatchEvent(new Event('input', {bubbles:true}));"
+                    "arguments[0].dispatchEvent(new Event('change', {bubbles:true}));",
+                    sel, target
+                )
+                time.sleep(0.4)  # 목록 갱신 대기
+                return True
+            except Exception:
+                return False
+
 
         categories = [
-            {"key": "caravan", "id": "siteGubun1", "value": "G01", "kws": ["카라반"]},
-            {"key": "auto", "id": "siteGubun2", "value": "G02", "kws": ["오토사이트", "오토"]},
-            {"key": "general", "id": "siteGubun3", "value": "G03", "kws": ["일반사이트", "일반"]},
+            {"key": "caravan", "value": "G01", "kws": ["카라반"]},
+            {"key": "auto",    "value": "G02", "kws": ["오토사이트", "오토"]},
+            {"key": "general", "value": "G03", "kws": ["일반사이트", "일반"]},
         ]
 
         merged = {c["key"]: {"available": [], "unavailable": []} for c in categories}
 
         for cat in categories:
-            click_radio_and_wait(cat["id"], cat["value"], cat["kws"])
-            soup = BeautifulSoup(driver.page_source, "html.parser")
-            parsed = parse_yeongdo_buttons(soup)
-            for k in merged:
-                if parsed[k]["available"]:
-                    merged[k]["available"] = sorted(set(merged[k]["available"] + parsed[k]["available"]))
-                if parsed[k]["unavailable"]:
-                    merged[k]["unavailable"] = sorted(set(merged[k]["unavailable"] + parsed[k]["unavailable"]))
+            if time.time() - t0 > total_max_sec:
+                break
+            # 라디오 전환 후 잠깐 대기
+            click_radio_and_wait(cat["value"], cat["kws"])
+            time.sleep(0.3)
+
+            # 이용인원 선택(필요 시)
+            _pick_person_if_needed()
+            time.sleep(0.3)
+
+            # 좌석 리스트 로드 재시도(메인/프레임 모두 탐색)
+            items = []
+            for _ in range(8):  # 최대 ~4초 정도 기다림
+                items = _extract_from_any_frame(driver)
+                if items:
+                    break
+                time.sleep(0.5)
+
+            # 디버그 로그는 items 만든 '후'에 찍기 (순서 버그 방지)
+            print("[yeongdo]", cat["key"], "items:", len(items), items[:8], flush=True)
+
+            # 현재 탭으로 귀속 (라벨 없으면 unknown → 현재 탭)
+            cur_av, cur_un = [], []
+            for it in (items or []):
+                area = (it.get('area') or 'unknown')
+                num  = it.get('num')
+                st   = it.get('state')
+                if not isinstance(num, int):
+                    continue
+                if area == 'unknown':
+                    area = cat['key']
+                if area != cat['key']:
+                    continue
+                (cur_av if st == 'available' else cur_un).append(num)
+
+            cur = {
+                "available": sorted(set(cur_av)),
+                "unavailable": sorted(set(cur_un)),
+            }
+
+            for kk in ("available", "unavailable"):
+                if cur.get(kk):
+                    merged[cat["key"]][kk] = sorted(set(merged[cat["key"]][kk] + cur[kk]))
+
 
         return merged
+
     finally:
-        try:
-            driver.quit()
-        except Exception:
-            pass
-        # 임시 프로필/캐시 정리 (충돌 예방, 용량 누수 방지)
+        try: driver.quit()
+        except Exception: pass
         try:
             if hasattr(driver, "temp_profile_dir"):
                 shutil.rmtree(driver.temp_profile_dir, ignore_errors=True)
         except Exception:
             pass
+
+
+def _run_with_timeout(fn, timeout_sec, *args, **kwargs):
+    import queue, threading
+    q = queue.Queue(1)
+    def runner():
+        try:
+            q.put((True, fn(*args, **kwargs)))
+        except Exception as e:
+            q.put((False, e))
+    th = threading.Thread(target=runner, daemon=True)
+    th.start()
+    th.join(timeout=timeout_sec)
+    if th.is_alive():
+        return ("timeout", None)
+    ok, val = q.get()
+    return ("ok", val) if ok else ("err", val)
 
 # ===== 영도 크롤러 엔트리 (GET/POST → 실패 시 Selenium 폴백) =====
 def fetch_yeongdo(selected_date: str, page_url: str):
@@ -948,28 +1311,61 @@ def fetch_yeongdo(selected_date: str, page_url: str):
         parsed_post = None
 
 
-    def total_available(parsed):
-        return sum(len(parsed[k]["available"]) for k in parsed) if parsed else 0
+    # ---- 여기부터 교체 ----
+    def _empty_or_missing(parsed):
+        if not parsed:
+            return True
+        for k in ("caravan","auto","general"):
+            if k not in parsed:
+                return True
+            a = parsed[k].get("available", [])
+            u = parsed[k].get("unavailable", [])
+            if (len(a) + len(u)) == 0:
+                return True
+        return False
 
-    if total_available(parsed_post) > 0:
-        return parsed_post
-    if total_available(parsed_get) > 0:
-        return parsed_get
+    def _merge_list(a, b):
+        sa = set(a or [])
+        sb = set(b or [])
+        ss = sa | sb
+        try:
+            return sorted(ss, key=lambda x: int(x))
+        except Exception:
+            return sorted(ss)
 
-    # 3) Selenium 폴백 (예외 먹고 빈 값 방지)
-    try:
-        parsed_click = fetch_yeongdo_via_selenium_dateclick(selected_date, page_url, headless=True, wait_sec=20)
-        has_any = parsed_click and (
-            total_available(parsed_click)
-            + sum(len(parsed_click[k]["unavailable"]) for k in parsed_click)
-            > 0
-        )
-        if has_any:
-            return parsed_click
-    except Exception:
-        pass
+    candidate = parsed_post or parsed_get or {
+        "caravan": {"available": [], "unavailable": []},
+        "auto":    {"available": [], "unavailable": []},
+        "general": {"available": [], "unavailable": []},
+    }
 
-    return parsed_post or parsed_get
+    if _empty_or_missing(candidate):
+        try:
+            # 타임아웃 래퍼 없이 직접 호출 (아래 3번의 '시간 예산' 보강을 같이 쓰면 안정적)
+            parsed_click = fetch_yeongdo_via_selenium_dateclick(
+                selected_date, page_url, headless=True, wait_sec=20
+            )
+        except Exception:
+            parsed_click = None
+
+        if parsed_click:
+            def _merge_list(a, b):
+                sa, sb = set(a or []), set(b or [])
+                try:  return sorted(sa | sb, key=lambda x: int(x))
+                except: return sorted(sa | sb)
+
+            merged = {}
+            for k in ("caravan", "auto", "general"):
+                merged[k] = {
+                    "available":  _merge_list(candidate.get(k, {}).get("available"),  parsed_click.get(k, {}).get("available")),
+                    "unavailable":_merge_list(candidate.get(k, {}).get("unavailable"), parsed_click.get(k, {}).get("unavailable")),
+                }
+            return merged
+
+        return candidate
+
+    return candidate
+
 
 # ===== Flask 라우트 =====
 @app.route("/", methods=["GET", "POST"])
@@ -1005,47 +1401,21 @@ def home():
             )
             return {"key": camp_key, "name": camp_info["name"], "areas": parsed, "media": media, "error": None}
 
-        # 2) 영도
+        # 2) 영도 — 서버에서는 즉시 빈 골격 + lazy 플래그만, 데이터는 /api/yeongdo로
         if camp_info.get("is_yeongdo") and not DISABLE_SCRAPERS:
-            page_url = camp_info.get('url_page', '')
-            if not page_url:
-                return {"key": camp_key, "name": camp_info["name"], "areas": {}, "media": media,
-                        "error": "yeongdo.url_page is empty"}
-
-            try:
-                parsed = fetch_yeongdo(selected_date, page_url)
-            except Exception as e:
-                return {"key": camp_key, "name": camp_info["name"], "areas": {}, "media": media,
-                        "error": f"영도 데이터 수집 오류: {e}"}
-
-            if not parsed:
-                return {"key": camp_key, "name": camp_info["name"], "areas": {}, "media": media,
-                        "error": "영도 데이터 파싱 실패"}
-
             area_info = {
-                "caravan": {
-                    "available": [f"{n:02d}" for n in parsed["caravan"]["available"]],
-                    "unavailable": [f"{n:02d}" for n in parsed["caravan"]["unavailable"]],
-                    "num_available": len(parsed["caravan"]["available"]),
-                    "num_unavailable": len(parsed["caravan"]["unavailable"]),
-                    "total": 15,
-                },
-                "auto": {
-                    "available": [f"{n:02d}" for n in parsed["auto"]["available"]],
-                    "unavailable": [f"{n:02d}" for n in parsed["auto"]["unavailable"]],
-                    "num_available": len(parsed["auto"]["available"]),
-                    "num_unavailable": len(parsed["auto"]["unavailable"]),
-                    "total": 40,
-                },
-                "general": {
-                    "available": [f"{n:02d}" for n in parsed["general"]["available"]],
-                    "unavailable": [f"{n:02d}" for n in parsed["general"]["unavailable"]],
-                    "num_available": len(parsed["general"]["available"]),
-                    "num_unavailable": len(parsed["general"]["unavailable"]),
-                    "total": 12,
-                },
+                "caravan": {"available": [], "unavailable": [], "num_available": 0, "num_unavailable": 0, "total": 15},
+                "auto":    {"available": [], "unavailable": [], "num_available": 0, "num_unavailable": 0, "total": 40},
+                "general": {"available": [], "unavailable": [], "num_available": 0, "num_unavailable": 0, "total": 12},
             }
-            return {"key": camp_key, "name": camp_info["name"], "areas": area_info, "media": media, "error": None}
+            return {
+                "key": camp_key,
+                "name": camp_info["name"],
+                "areas": area_info,
+                "media": media,
+                "error": None,
+                "lazy_yeongdo": True,   # ⬅️ 템플릿에서 이 플래그로 JS 로딩 트리거
+            }
 
         # 3) 삼락/대저/화명
         camping_url = (camp_info.get("url_base") or "").format(selected_date)
