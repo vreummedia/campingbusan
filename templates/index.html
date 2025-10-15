@@ -397,14 +397,11 @@
           {% endfor %}
 
         {% elif camp.name == '영도' %}
-          {% set caravan = camp.areas.get('caravan', {}) %}
-          {% set auto    = camp.areas.get('auto', {}) %}
-          {% set general = camp.areas.get('general', {}) %}
           {% set rows = [
-            {'label':'카라반 (6인용)','weekday': price_of(camp,'카라반 (6인용)','평일'),'weekend': price_of(camp,'카라반 (6인용)','주말'),'remain': caravan.num_available,'total':15,'note': price_of(camp,'카라반 (6인용)','성수기') ~ ' (성수기: 7~8월)'},
-            {'label':'카라반 (4인용)','weekday': price_of(camp,'카라반 (4인용)','평일'),'weekend': price_of(camp,'카라반 (4인용)','주말'),'remain': caravan.num_available,'total':15,'note': price_of(camp,'카라반 (4인용)','성수기') ~ ' (성수기: 7~8월)'},
-            {'label':'오토','weekday': price_of(camp,'오토','평일'),'weekend': price_of(camp,'오토','주말'),'remain': auto.num_available,'total':40,'note': price_of(camp,'오토','성수기') ~ ' (성수기: 7~8월)'},
-            {'label':'일반','weekday': price_of(camp,'일반','평일'),'weekend': price_of(camp,'일반','주말'),'remain': general.num_available,'total':12,'note': price_of(camp,'일반','성수기') ~ ' (성수기: 7~8월)'}
+            {'label':'카라반 (6인용)','key':'caravan6','weekday': price_of(camp,'카라반 (6인용)','평일'),'weekend': price_of(camp,'카라반 (6인용)','주말'),'total':15,'note': price_of(camp,'카라반 (6인용)','성수기') ~ ' (성수기: 7~8월)'},
+            {'label':'카라반 (4인용)','key':'caravan4','weekday': price_of(camp,'카라반 (4인용)','평일'),'weekend': price_of(camp,'카라반 (4인용)','주말'),'total':15,'note': price_of(camp,'카라반 (4인용)','성수기') ~ ' (성수기: 7~8월)'},
+            {'label':'오토','key':'auto','weekday': price_of(camp,'오토','평일'),'weekend': price_of(camp,'오토','주말'),'total':40,'note': price_of(camp,'오토','성수기') ~ ' (성수기: 7~8월)'},
+            {'label':'일반','key':'general','weekday': price_of(camp,'일반','평일'),'weekend': price_of(camp,'일반','주말'),'total':12,'note': price_of(camp,'일반','성수기') ~ ' (성수기: 7~8월)'}
           ] %}
           {% for r in rows %}
             <tr class="{{ 'tr-camp-start' if loop.first else '' }}">
@@ -412,7 +409,10 @@
               <td>{{ r.label }}</td>
               <td>{{ r.weekday }}</td>
               <td>{{ r.weekend }}</td>
-              <td>{{ r.remain }} / {{ r.total }}</td>
+              <td>
+                {# JS가 채울 자리 #}
+                <span id="yeongdo-all-{{ r.key }}-remain">0</span> / {{ r.total }}
+              </td>
               <td>{{ r.note }}</td>
             </tr>
           {% endfor %}
@@ -429,9 +429,12 @@
               <td>{{ r.weekday }}</td>
               <td>{{ r.weekend }}</td>
               <td>{{ r.remain }} / {{ r.total }}</td>
-              <td>{{ r.note }}</td>
+
+              {# ✅ 비고: 첫 행에서만 rowspan으로 병합 #}
+              {% if loop.first %}<td rowspan="{{ rows|length }}">{{ r.note }}</td>{% endif %}
             </tr>
           {% endfor %}
+
         {% elif camp.name == '구덕' %}
           {% set area = camp.areas.get('deck', {}) %}
 
@@ -480,11 +483,8 @@
               <td>10,000원 (4인 이하)</td>
               <td>20,000원 (5~9인 이하)</td>
               <td>{{ (av_cnt if av_cnt is not none else '—') }} / {{ ids|length }}</td>
-              <td>
-                {% if loop.first and (not has_lists) and (not treat_all_free) %}
-                  합계: {{ sum_avail }} / {{ total_all }}
-                {% endif %}
-              </td>
+              {# ✅ 비고: 첫 행에서만 rowspan으로 병합, 고정 문구 #}
+              {% if loop.first %}<td rowspan="{{ groups|length }}">평일/주말 비용 동일</td>{% endif %}
             </tr>
           {% endfor %}
         {% endif %}
@@ -492,6 +492,21 @@
       {% endfor %}
       </tbody>
     </table>
+    <div id="yeongdo-hint-all" style="margin:8px 0; color:#6c757d;"></div>
+    <script>
+      document.addEventListener('DOMContentLoaded', function(){
+        // ‘전체’에서도 영도 데이터 백그라운드로 가져와서 표에 반영
+        if ('{{ selected_camp_key }}' === 'all') {
+          const hintAll = document.getElementById('yeongdo-hint-all');
+          if (hintAll && !document.getElementById('yeongdo-hint')) {
+            const alias = document.createElement('span');
+            alias.id = 'yeongdo-hint';
+            hintAll.appendChild(alias);
+          }
+          loadYeongdo('{{ selected_date }}');
+        }
+      });
+    </script>
     {% else %}
 
     {% for camp in all_camps %}
@@ -699,29 +714,29 @@
                 </div>
               </div>
             {% endfor %}
+        {% elif selected_camp_key == 'yeongdo' %}
+          {% set camp_idx = loop.index0 %}   {# ← 바깥 camp 루프의 인덱스를 저장 #}
+          {% set labels = {'caravan':'카라반', 'auto':'오토', 'general':'일반'} %}
 
-          {% elif selected_camp_key == 'yeongdo' %}
-            {# ---- 영도 ---- #}
-            {% set labels = {'caravan':'카라반','auto':'오토','general':'일반'} %}
+          <div id="yeongdo-container-{{ camp_idx }}">
+            <p id="yeongdo-hint-{{ camp_idx }}" style="color:#6c757d">영도 데이터를 불러오는 중입니다…</p>
+
             {% for key in ['caravan','auto','general'] %}
               {% set area = camp.areas[key] %}
-              {% set total_count = area.total if area.total else (area.available|length + area.unavailable|length) %}
-              {% set all_sites = (area.available + area.unavailable)|unique|sort %}
-              <div class="area-container">
-                <h3 class="area-title">{{ labels[key] }} (잔여: {{ area.num_available }}개 / {{ total_count }}개)</h3>
-                <div class="site-list">
-                  {% if all_sites %}
-                    {% for sid in all_sites %}
-                      <div class="site-item {{ 'text-available' if sid in area.available else ('text-unavailable' if sid in area.unavailable else '') }}">
-                        {{ "%02d"|format(sid|int) if sid|string|length <= 2 else sid }}
-                      </div>
-                    {% endfor %}
-                  {% else %}
-                    <p style="color:#6c757d; font-style: italic;">해당 구역의 사이트 정보를 찾을 수 없습니다.</p>
-                  {% endif %}
-                </div>
+              <div class="area-container" id="yeongdo-{{ key }}-{{ camp_idx }}">  {# ← camp_idx 사용 #}
+                <h3 class="area-title">
+                  {{ labels[key] }} (잔여: <span class="cnt-available">0</span>개 / {{ area.total }}개)
+                </h3>
+                <div class="site-list"></div>
               </div>
             {% endfor %}
+          </div>
+
+          <script>
+            document.addEventListener('DOMContentLoaded', function () {
+              loadYeongdo('{{ selected_date }}', '-{{ camp_idx }}');   // ← camp_idx로 맞춤
+            });
+          </script>
 
           {% elif selected_camp_key == 'busan_port' %}
             {# ---- 부산항 ---- #}
@@ -820,6 +835,136 @@
             document.getElementById('dateForm').submit();
         }
     </script>
+    <script>
+    let YEONGDO_POLLING = null;
+
+    function loadYeongdo(dateStr, suffix="") {
+      stopYeongdoPolling();
+      const maxTries = 60;
+      let tries = 0;
+      const url = `/api/yeongdo?date=${encodeURIComponent(dateStr)}`;
+      const hint = document.getElementById(`yeongdo-hint${suffix}`) || document.getElementById('yeongdo-hint');
+
+      const tick = () => {
+        fetch(url, {cache:'no-store'})
+          .then(r => r.json())
+          .then(json => {
+            if (json.status === 'ready') {
+            if (json.data && json.data.error) {
+              if (hint) hint.textContent = '영도 오류: ' + json.data.error;
+            } else if (hint) {
+              hint.textContent = '영도 데이터를 가져왔습니다.';
+            }
+              renderYeongdo(json.data, suffix);
+              renderYeongdoAllSummary(json.data);
+              stopYeongdoPolling();
+            } else if (json.status === 'pending') {
+              if (tries++ < maxTries) {
+                if (hint) hint.textContent = `영도 수집 중… (${tries}/${maxTries})`;
+                YEONGDO_POLLING = setTimeout(tick, 1000);
+              } else {
+                if (hint) hint.textContent = '처리가 지연되고 있어요. 계속 확인 중…';
+                tries = 0;                 // 카운터 리셋
+                YEONGDO_POLLING = setTimeout(tick, 5000); // 5초 쉬고 다시 폴링
+              }
+            } else {
+              if (hint) hint.textContent = '알 수 없는 응답입니다.';
+              stopYeongdoPolling();
+            }
+          })
+          .catch(_ => {
+            if (tries++ < maxTries) {
+              if (hint) hint.textContent = `재시도 중… (${tries}/${maxTries})`;
+              YEONGDO_POLLING = setTimeout(tick, 1200);
+            } else {
+              if (hint) hint.textContent = '네트워크 오류가 발생했습니다.';
+              stopYeongdoPolling();
+            }
+          });
+      };
+
+      tick();
+    }
+
+    function stopYeongdoPolling(){
+      if (YEONGDO_POLLING) {
+        clearTimeout(YEONGDO_POLLING);
+        YEONGDO_POLLING = null;
+      }
+    }
+
+    function renderYeongdo(data, suffix="") {
+      const groups = [
+        {k:'caravan', label:'카라반', total:15},
+        {k:'auto',    label:'오토',   total:40},
+        {k:'general', label:'일반',   total:12},
+      ];
+
+      groups.forEach(g => {
+        const wrap = document.getElementById(`yeongdo-${g.k}${suffix}`) || document.getElementById(`yeongdo-${g.k}`);
+        if (!wrap) return;
+        const listEl = wrap.querySelector('.site-list');
+        const cntEl  = wrap.querySelector('.cnt-available');
+
+        const av = (data[g.k]?.available   || []).slice().sort((a,b)=>Number(a)-Number(b));
+        const un = (data[g.k]?.unavailable || []).slice().sort((a,b)=>Number(a)-Number(b));
+        if (cntEl) cntEl.textContent = av.length;
+
+        const pad2 = v => String(v).padStart(2,'0');
+
+        listEl.innerHTML = '';
+        const all = [...new Set([...av, ...un])].sort((a,b)=>Number(a)-Number(b));
+        if (all.length === 0) {
+          const p = document.createElement('p');
+          p.style.cssText = 'color:#6c757d; font-style:italic;';
+          p.textContent = '해당 구역의 사이트 정보를 찾을 수 없습니다.';
+          listEl.appendChild(p);
+          return;
+        }
+
+        all.forEach(sid => {
+          const div = document.createElement('div');
+          const isAv = av.includes(sid);
+          const isUn = un.includes(sid);
+          div.className = 'site-item ' + (isAv ? 'text-available' : (isUn ? 'text-unavailable' : ''));
+          div.textContent = pad2(sid);
+          listEl.appendChild(div);
+        });
+      });
+    }
+    </script>
+    <script>
+    function renderYeongdoAllSummary(data){
+      // caravan(공유), auto, general
+      const counts = {
+        caravan: (data.caravan?.available || []).length,
+        auto:    (data.auto?.available    || []).length,
+        general: (data.general?.available || []).length,
+      };
+
+      const map = {
+        caravan6: 'yeongdo-all-caravan6-remain',
+        caravan4: 'yeongdo-all-caravan4-remain',
+        auto:     'yeongdo-all-auto-remain',
+        general:  'yeongdo-all-general-remain',
+      };
+
+      // 카라반 6/4 둘 다 같은 잔여 수로 표기 (서버 파싱은 단일 'caravan' 그룹)
+      const values = {
+        caravan6: counts.caravan,
+        caravan4: counts.caravan,
+        auto:     counts.auto,
+        general:  counts.general,
+      };
+
+      Object.keys(values).forEach(k=>{
+        const el = document.getElementById(map[k]);
+        if (el) el.textContent = String(values[k]);
+      });
+    }
+    </script>
+
+
     <!-- 후원하기 섹션 -->
     <section class="donate-wrap">
       <div class="donate-card">
