@@ -129,6 +129,69 @@ def api_yeongdo():
     return jsonify({"status": "pending", "date": d, "tries": 0, "max": PROGRESS_MAX})
 
 
+# === Gudeok polling cache ===
+GUDEOK_CACHE = {}      # date -> (data, ts)
+GUDEOK_LOCK = Lock()
+GUDEOK_TTL  = 60
+GUDEOK_INFLIGHT = {}   # date -> {"ts": float, "ticks": int}
+
+def _progress_ticker_gudeok(date_key: str):
+    try:
+        while True:
+            with GUDEOK_LOCK:
+                rec = GUDEOK_INFLIGHT.get(date_key)
+                if not rec:
+                    return
+                rec["ticks"] = min(PROGRESS_MAX, rec.get("ticks", 0) + 1)
+                GUDEOK_INFLIGHT[date_key] = rec
+            time.sleep(1.0)
+    except Exception:
+        return
+
+def _gudeok_worker(d: str, page_url: str):
+    data = None
+    ticker = Thread(target=_progress_ticker_gudeok, args=(d,), daemon=True)
+    ticker.start()
+    try:
+        with SELENIUM_SEM:
+            data = fetch_gudeok_sites_with_retry(selected_date=d, page_url=page_url)
+    except Exception as e:
+        print(f"[gudeok][{d}] worker error:", repr(e), flush=True)
+        data = {"error": f"크롤링 실패: {e}"}
+    finally:
+        if not data:
+            data = {"deck":{"available":[], "unavailable":[], "num_available":0, "num_unavailable":0, "total":0}}
+        with GUDEOK_LOCK:
+            _cache_set(GUDEOK_CACHE, d, data)
+            GUDEOK_INFLIGHT.pop(d, None)
+
+
+@app.route("/api/gudeok")
+def api_gudeok():
+    d = request.args.get("date") or date.today().strftime("%Y-%m-%d")
+    page_url = CAMPING_TABS["gudeok"]["url_page"]
+
+    with GUDEOK_LOCK:
+        cached = _cache_get(GUDEOK_CACHE, d, GUDEOK_TTL)
+        if cached is not None:
+            return jsonify({"status":"ready","date":d,"data":cached})
+
+        now = time.time()
+        rec = GUDEOK_INFLIGHT.get(d)
+        if rec and (now - rec.get("ts", now)) > INFLIGHT_MAX:
+            GUDEOK_INFLIGHT.pop(d, None)
+            rec = None
+
+        if rec:
+            tries = int(rec.get("ticks", 0))
+            return jsonify({"status":"pending","date":d,"tries":tries,"max":PROGRESS_MAX})
+
+        GUDEOK_INFLIGHT[d] = {"ts": time.time(), "ticks": 0}
+
+    Thread(target=_gudeok_worker, args=(d, page_url), daemon=True).start()
+    return jsonify({"status":"pending","date":d,"tries":0,"max":PROGRESS_MAX})
+
+
 # ─────────────────────────────────────────────────────────
 
 def _accept_any_alert(driver, timeout=2):
@@ -1395,11 +1458,16 @@ def home():
 
         # 1) 구덕
         if camp_info.get("is_gudeok") and not DISABLE_SCRAPERS:
-            parsed = fetch_gudeok_sites_with_retry(
-                selected_date=selected_date,
-                page_url=camp_info.get('url_page')
-            )
-            return {"key": camp_key, "name": camp_info["name"], "areas": parsed, "media": media, "error": None}
+            # 즉시 비어있는 골격만 내려주고, 실제 데이터는 /api/gudeok에서 폴링
+            area = {"deck": {"available": [], "unavailable": [], "num_available": 0, "num_unavailable": 0, "total": 18}}
+            return {
+                "key": camp_key,
+                "name": camp_info["name"],
+                "areas": area,
+                "media": media,
+                "error": None,
+                "lazy_gudeok": True,   # ⬅️ 템플릿 트리거 플래그
+            }
 
         # 2) 영도 — 서버에서는 즉시 빈 골격 + lazy 플래그만, 데이터는 /api/yeongdo로
         if camp_info.get("is_yeongdo") and not DISABLE_SCRAPERS:
