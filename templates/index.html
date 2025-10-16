@@ -336,164 +336,176 @@
           <th>비고</th>
         </tr>
       </thead>
-      <tbody>
+    <tbody>
+    {% for camp in all_camps %}
 
-      {% for camp in all_camps %}
-        {% if camp.name == '삼락' %}
-          {% set rows = [
-            {'label':'오토 A','key':'area_a','weekday': price_of(camp,'오토 캠핑','평일'),'weekend': price_of(camp,'오토 캠핑','주말'),'total':36},
-            {'label':'오토 B','key':'area_b','weekday': price_of(camp,'오토 캠핑','평일'),'weekend': price_of(camp,'오토 캠핑','주말'),'total':31},
-            {'label':'일반 C','key':'area_c','weekday': price_of(camp,'일반 캠핑','평일'),'weekend': price_of(camp,'일반 캠핑','주말'),'total':50},
-          ] %}
-          {% for r in rows %}
-            <tr class="{{ 'tr-camp-start' if loop.first else '' }}">
-              {% if loop.first %}<td rowspan="{{ rows|length }}">{{ camp.name }}</td>{% endif %}
-              <td>{{ r.label }}</td>
-              <td>{{ r.weekday }}</td>
-              <td>{{ r.weekend }}</td>
-              <td>{{ (camp.areas.get(r.key, {}).num_available or 0) }} / {{ r.total }}</td>
-              <td></td>
-            </tr>
-          {% endfor %}
+      {% if camp.name == '삼락' %}
+        {% set rows = [
+          {'label':'오토 A','key':'area_a','weekday': price_of(camp,'오토 캠핑','평일'),'weekend': price_of(camp,'오토 캠핑','주말'),'total':36},
+          {'label':'오토 B','key':'area_b','weekday': price_of(camp,'오토 캠핑','평일'),'weekend': price_of(camp,'오토 캠핑','주말'),'total':31},
+          {'label':'일반 C','key':'area_c','weekday': price_of(camp,'일반 캠핑','평일'),'weekend': price_of(camp,'일반 캠핑','주말'),'total':50},
+        ] %}
+        {% for r in rows %}
+          <tr class="{{ 'tr-camp-start' if loop.first else '' }}">
+            {% if loop.first %}<td rowspan="{{ rows|length }}">{{ camp.name }}</td>{% endif %}
+            <td>{{ r.label }}</td>
 
-        {% elif camp.name == '대저' %}
-          {% set rows = [
-            {'label':'A구역 (5x8)','key':'area_a','weekday': price_of(camp,'A구역','평일'),'weekend': price_of(camp,'A구역','주말'),'total':36},
-            {'label':'B구역 (12x12)','key':'area_b','weekday': price_of(camp,'B구역','평일'),'weekend': price_of(camp,'B구역','주말'),'total':7},
-            {'label':'C구역 (10x12)','key':'area_c','weekday': price_of(camp,'C구역','평일'),'weekend': price_of(camp,'C구역','주말'),'total':16},
-            {'label':'D구역 (10x10)','key':'area_d','weekday': price_of(camp,'D구역','평일'),'weekend': price_of(camp,'D구역','주말'),'total':52},
-          ] %}
-          {% for r in rows %}
-            <tr class="{{ 'tr-camp-start' if loop.first else '' }}">
-              {% if loop.first %}<td rowspan="{{ rows|length }}">{{ camp.name }}</td>{% endif %}
-              <td>{{ r.label }}</td>
-              <td>{{ r.weekday }}</td>
-              <td>{{ r.weekend }}</td>
-              <td>{{ (camp.areas.get(r.key, {}).num_available or 0) }} / {{ r.total }}</td>
-              <td></td>
-            </tr>
-          {% endfor %}
-
-        {% elif camp.name == '화명' %}
-          {% set wk = price_of(camp,'전 구역','평일') %}
-          {% set we = price_of(camp,'전 구역','주말') %}
-          {% set defs = {'area_a':'A구역','area_b':'B구역','area_c':'C구역','area_d':'D구역','area_e':'E구역'} %}
-          {% set keys = ['area_a','area_b','area_c','area_d','area_e'] %}
-          {% set rows = [] %}
-          {% for k in keys %}
-            {% set a = camp.areas.get(k, {}) %}
-            {% set total = (a.max_site_num if k in ['area_a','area_b','area_c'] else (a.available|length + a.unavailable|length)) %}
-            {% set _ = rows.append({'label': defs[k], 'key': k, 'weekday': wk, 'weekend': we, 'total': total}) %}
-          {% endfor %}
-          {% for r in rows %}
-            <tr class="{{ 'tr-camp-start' if loop.first else '' }}">
-              {% if loop.first %}<td rowspan="{{ rows|length }}">{{ camp.name }}</td>{% endif %}
-              <td>{{ r.label }}</td>
-              <td>{{ r.weekday }}</td>
-              <td>{{ r.weekend }}</td>
-              <td>{{ (camp.areas.get(r.key, {}).num_available or 0) }} / {{ r.total }}</td>
-              <td></td>
-            </tr>
-          {% endfor %}
-
-        {% elif camp.name == '영도' %}
-          {% set rows = [
-            {'label':'카라반 (6인용)','key':'caravan6','weekday': price_of(camp,'카라반 (6인용)','평일'),'weekend': price_of(camp,'카라반 (6인용)','주말'),'total':15,'note': price_of(camp,'카라반 (6인용)','성수기') ~ ' (성수기: 7~8월)'},
-            {'label':'카라반 (4인용)','key':'caravan4','weekday': price_of(camp,'카라반 (4인용)','평일'),'weekend': price_of(camp,'카라반 (4인용)','주말'),'total':15,'note': price_of(camp,'카라반 (4인용)','성수기') ~ ' (성수기: 7~8월)'},
-            {'label':'오토','key':'auto','weekday': price_of(camp,'오토','평일'),'weekend': price_of(camp,'오토','주말'),'total':40,'note': price_of(camp,'오토','성수기') ~ ' (성수기: 7~8월)'},
-            {'label':'일반','key':'general','weekday': price_of(camp,'일반','평일'),'weekend': price_of(camp,'일반','주말'),'total':12,'note': price_of(camp,'일반','성수기') ~ ' (성수기: 7~8월)'}
-          ] %}
-          {% for r in rows %}
-            <tr class="{{ 'tr-camp-start' if loop.first else '' }}">
-              {% if loop.first %}<td rowspan="{{ rows|length }}">{{ camp.name }}</td>{% endif %}
-              <td>{{ r.label }}</td>
-              <td>{{ r.weekday }}</td>
-              <td>{{ r.weekend }}</td>
-              <td>
-                {# JS가 채울 자리 #}
-                <span id="yeongdo-all-{{ r.key }}-remain">0</span> / {{ r.total }}
-              </td>
-              <td>{{ r.note }}</td>
-            </tr>
-          {% endfor %}
-
-        {% elif camp.name == '부산항' %}
-          {% set rows = [
-            {'label':'오토','weekday': price_of(camp,'오토','요금'),'weekend':'—','remain':0,'total':16,'note':'인터파크에서 확인'},
-            {'label':'데크','weekday': price_of(camp,'데크','요금'),'weekend':'—','remain':0,'total':24,'note':'인터파크에서 확인'}
-          ] %}
-          {% for r in rows %}
-            <tr class="{{ 'tr-camp-start' if loop.first else '' }}">
-              {% if loop.first %}<td rowspan="{{ rows|length }}">{{ camp.name }}</td>{% endif %}
-              <td>{{ r.label }}</td>
-              <td>{{ r.weekday }}</td>
-              <td>{{ r.weekend }}</td>
-              <td>{{ r.remain }} / {{ r.total }}</td>
-
-              {# ✅ 비고: 첫 행에서만 rowspan으로 병합 #}
-              {% if loop.first %}<td rowspan="{{ rows|length }}">{{ r.note }}</td>{% endif %}
-            </tr>
-          {% endfor %}
-
-        {% elif camp.name == '구덕' %}
-          {% set area = camp.areas.get('deck', {}) %}
-
-          {# 아이디 정규화: 모두 문자열로, 앞뒤 공백 제거 #}
-          {% set avail = (area.available or []) | map('string') | map('trim') | list %}
-          {% set unavail = (area.unavailable or []) | map('string') | map('trim') | list %}
-
-          {% set groups = [
-            ('1야영장',['1-1','1-2']),
-            ('2야영장',['2-1','2-2','2-3','2-4']),
-            ('3야영장',['3-1','3-2','3-3']),
-            ('4야영장',['4-1','4-2','4-3']),
-            ('5야영장',['5-1','5-2','5-3','5-4']),
-            ('6야영장',['6-1','6-2'])
-          ] %}
-
-          {# 전체 좌석 수 #}
-          {% set total_all = 0 %}
-          {% for _lbl, _ids in groups %}
-            {% set total_all = total_all + (_ids|length) %}
-          {% endfor %}
-
-          {# 리스트가 비어있고 합계만 온 경우 대비 #}
-          {% set sum_avail = area.num_available or 0 %}
-          {% set has_lists = (avail|length + unavail|length) > 0 %}
-          {% set treat_all_free = (not has_lists) and (sum_avail == total_all) %}
-
-          {% for label, ids in groups %}
-            {# 그룹 가용 수 계산 #}
-            {% if has_lists %}
-              {% set ns = namespace(av=0) %}
-              {% for sid in ids %}
-                {% set sid_norm = sid|string|trim %}
-                {% if sid_norm in avail %}{% set ns.av = ns.av + 1 %}{% endif %}
-              {% endfor %}
-              {% set av_cnt = ns.av %}
-            {% elif treat_all_free %}
-              {% set av_cnt = ids|length %}
+            {# 오토 A/B는 동일가 → A행에서만 평/주 rowspan=2 #}
+            {% if r.key in ['area_a','area_b'] %}
+              {% if r.key == 'area_a' %}
+                <td rowspan="2">{{ r.weekday }}</td>
+                <td rowspan="2">{{ r.weekend }}</td>
+              {% endif %}
             {% else %}
-              {% set av_cnt = None %}
+              <td>{{ r.weekday }}</td>
+              <td>{{ r.weekend }}</td>
             {% endif %}
 
-            <tr class="{{ 'tr-camp-start' if loop.first else '' }}">
-              {% if loop.first %}<td rowspan="{{ groups|length }}">{{ camp.name }}</td>{% endif %}
-              <td>{{ label }}</td>
-              <td>10,000원 (4인 이하)</td>
-              <td>20,000원 (5~9인 이하)</td>
-              <td>
-                <span id="gudeok-all-{{ loop.index }}-remain">{{ (av_cnt if av_cnt is not none else '—') }}</span>
-                / {{ ids|length }}
-              </td>
-              {# ✅ 비고: 첫 행에서만 rowspan으로 병합, 고정 문구 #}
-              {% if loop.first %}<td rowspan="{{ groups|length }}">평일/주말 비용 동일</td>{% endif %}
-            </tr>
-          {% endfor %}
-        {% endif %}
+            <td>{{ (camp.areas.get(r.key, {}).num_available or 0) }} / {{ r.total }}</td>
+            <td></td>
+          </tr>
+        {% endfor %}
 
-      {% endfor %}
-      </tbody>
+      {% elif camp.name == '대저' %}
+        {% set rows = [
+          {'label':'A구역 (5x8)','key':'area_a','weekday': price_of(camp,'A구역','평일'),'weekend': price_of(camp,'A구역','주말'),'total':36},
+          {'label':'B구역 (12x12)','key':'area_b','weekday': price_of(camp,'B구역','평일'),'weekend': price_of(camp,'B구역','주말'),'total':7},
+          {'label':'C구역 (10x12)','key':'area_c','weekday': price_of(camp,'C구역','평일'),'weekend': price_of(camp,'C구역','주말'),'total':16},
+          {'label':'D구역 (10x10)','key':'area_d','weekday': price_of(camp,'D구역','평일'),'weekend': price_of(camp,'D구역','주말'),'total':52},
+        ] %}
+        {% for r in rows %}
+          <tr class="{{ 'tr-camp-start' if loop.first else '' }}">
+            {% if loop.first %}<td rowspan="{{ rows|length }}">{{ camp.name }}</td>{% endif %}
+            <td>{{ r.label }}</td>
+            <td>{{ r.weekday }}</td>
+            <td>{{ r.weekend }}</td>
+            <td>{{ (camp.areas.get(r.key, {}).num_available or 0) }} / {{ r.total }}</td>
+            <td></td>
+          </tr>
+        {% endfor %}
+
+      {% elif camp.name == '화명' %}
+        {% set wk = price_of(camp,'전 구역','평일') %}
+        {% set we = price_of(camp,'전 구역','주말') %}
+        {% set defs = {'area_a':'A구역','area_b':'B구역','area_c':'C구역','area_d':'D구역','area_e':'E구역'} %}
+        {% set keys = ['area_a','area_b','area_c','area_d','area_e'] %}
+        {% set rows = [] %}
+        {% for k in keys %}
+          {% set a = camp.areas.get(k, {}) %}
+          {% set total = (a.max_site_num if k in ['area_a','area_b','area_c'] else (a.available|length + a.unavailable|length)) %}
+          {% set _ = rows.append({'label': defs[k], 'key': k, 'total': total}) %}
+        {% endfor %}
+        {% for r in rows %}
+          <tr class="{{ 'tr-camp-start' if loop.first else '' }}">
+            {% if loop.first %}<td rowspan="{{ rows|length }}">{{ camp.name }}</td>{% endif %}
+            <td>{{ r.label }}</td>
+
+            {# A~E 동일가 → 첫 행에서만 평/주 rowspan으로 출력 #}
+            {% if loop.first %}
+              <td rowspan="{{ rows|length }}">{{ wk }}</td>
+              <td rowspan="{{ rows|length }}">{{ we }}</td>
+            {% endif %}
+
+            <td>{{ (camp.areas.get(r.key, {}).num_available or 0) }} / {{ r.total }}</td>
+            <td></td>
+          </tr>
+        {% endfor %}
+
+      {% elif camp.name == '영도' %}
+        {% set rows = [
+          {'label':'카라반 (6인용)','key':'caravan6','weekday': price_of(camp,'카라반 (6인용)','평일'),'weekend': price_of(camp,'카라반 (6인용)','주말'),'total':15,'note': price_of(camp,'카라반 (6인용)','성수기') ~ ' (성수기: 7~8월)'},
+          {'label':'카라반 (4인용)','key':'caravan4','weekday': price_of(camp,'카라반 (4인용)','평일'),'weekend': price_of(camp,'카라반 (4인용)','주말'),'total':15,'note': price_of(camp,'카라반 (4인용)','성수기') ~ ' (성수기: 7~8월)'},
+          {'label':'오토','key':'auto','weekday': price_of(camp,'오토','평일'),'weekend': price_of(camp,'오토','주말'),'total':40,'note': price_of(camp,'오토','성수기') ~ ' (성수기: 7~8월)'},
+          {'label':'일반','key':'general','weekday': price_of(camp,'일반','평일'),'weekend': price_of(camp,'일반','주말'),'total':12,'note': price_of(camp,'일반','성수기') ~ ' (성수기: 7~8월)'}
+        ] %}
+        {% for r in rows %}
+          <tr class="{{ 'tr-camp-start' if loop.first else '' }}">
+            {% if loop.first %}<td rowspan="{{ rows|length }}">{{ camp.name }}</td>{% endif %}
+            <td>{{ r.label }}</td>
+            <td>{{ r.weekday }}</td>
+            <td>{{ r.weekend }}</td>
+            <td>
+              <span id="yeongdo-all-{{ r.key }}-remain">0</span> / {{ r.total }}
+            </td>
+            <td>{{ r.note }}</td>
+          </tr>
+        {% endfor %}
+
+      {% elif camp.name == '부산항' %}
+        {# 평/주 동일가 → 두 칸(colspan=2)로 병합 #}
+        {% set rows = [
+          {'label':'오토','price':'30,000원','total':16,'note':'인터파크에서 확인'},
+          {'label':'데크','price':'25,000원','total':24,'note':'인터파크에서 확인'}
+        ] %}
+        {% for r in rows %}
+          <tr class="{{ 'tr-camp-start' if loop.first else '' }}">
+            {% if loop.first %}<td rowspan="{{ rows|length }}">{{ camp.name }}</td>{% endif %}
+            <td>{{ r.label }}</td>
+
+            {# 평일/주말 열(2개)을 하나로 합침 #}
+            <td colspan="2">{{ r.price }}</td>
+
+            <td>0 / {{ r.total }}</td>
+            {% if loop.first %}<td rowspan="{{ rows|length }}">{{ r.note }}</td>{% endif %}
+          </tr>
+        {% endfor %}
+
+      {% elif camp.name == '구덕' %}
+        {% set area = camp.areas.get('deck', {}) %}
+        {% set avail = (area.available or []) | map('string') | map('trim') | list %}
+        {% set unavail = (area.unavailable or []) | map('string') | map('trim') | list %}
+        {% set groups = [
+          ('1야영장',['1-1','1-2']),
+          ('2야영장',['2-1','2-2','2-3','2-4']),
+          ('3야영장',['3-1','3-2','3-3']),
+          ('4야영장',['4-1','4-2','4-3']),
+          ('5야영장',['5-1','5-2','5-3','5-4']),
+          ('6야영장',['6-1','6-2'])
+        ] %}
+        {% set total_all = 0 %}
+        {% for _lbl, _ids in groups %}{% set total_all = total_all + (_ids|length) %}{% endfor %}
+        {% set sum_avail = area.num_available or 0 %}
+        {% set has_lists = (avail|length + unavail|length) > 0 %}
+        {% set treat_all_free = (not has_lists) and (sum_avail == total_all) %}
+
+        {% for label, ids in groups %}
+          {% if has_lists %}
+            {% set ns = namespace(av=0) %}
+            {% for sid in ids %}
+              {% set sid_norm = sid|string|trim %}
+              {% if sid_norm in avail %}{% set ns.av = ns.av + 1 %}{% endif %}
+            {% endfor %}
+            {% set av_cnt = ns.av %}
+          {% elif treat_all_free %}
+            {% set av_cnt = ids|length %}
+          {% else %}
+            {% set av_cnt = None %}
+          {% endif %}
+
+          <tr class="{{ 'tr-camp-start' if loop.first else '' }}">
+            {% if loop.first %}<td rowspan="{{ groups|length }}">{{ camp.name }}</td>{% endif %}
+            <td>{{ label }}</td>
+
+            {# 평/주 2칸을 합쳐(colspan=2) + 1~6 전체를 rowspan으로 묶기 #}
+            {% if loop.first %}
+              <td colspan="2" rowspan="{{ groups|length }}">
+                10,000원 (4인 이하) / 20,000원 (5~9인 이하)
+              </td>
+            {% endif %}
+
+            <td>
+              <span id="gudeok-all-{{ loop.index }}-remain">{{ (av_cnt if av_cnt is not none else '—') }}</span>
+              / {{ ids|length }}
+            </td>
+            {% if loop.first %}<td rowspan="{{ groups|length }}">평일/주말 비용 동일</td>{% endif %}
+          </tr>
+        {% endfor %}
+
+      {% endif %}
+
+    {% endfor %}
+    </tbody>
+
     </table>
     <div id="yeongdo-hint-all" style="margin:8px 0; color:#6c757d;"></div>
     <div id="gudeok-hint-all" style="margin:4px 0; color:#6c757d;"></div>
