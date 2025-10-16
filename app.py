@@ -34,17 +34,16 @@ app = Flask(
 DISABLE_SCRAPERS = os.getenv("DISABLE_SCRAPERS") == "1"
 
 
-
-
 from flask import jsonify
 from threading import Thread, Lock, Semaphore
 
 YEONGDO_CACHE = {}          # date -> (data, ts)
 YEONGDO_LOCK = Lock()
-YEONGDO_TTL = 60
+YEONGDO_TTL = 180
 
-# 동시에 여러 개 안 띄우도록 (기본 1~2)
-SELENIUM_SEM = Semaphore(int(os.getenv("YEONGDO_MAX_CONCURRENCY", "2")))
+# 동시에 여러 개 안 띄우도록 (영도/구덕 공용)
+SCRAPER_MAX_CONCURRENCY = int(os.getenv("SCRAPER_MAX_CONCURRENCY", "1"))  # ← 기본 1
+SELENIUM_SEM = Semaphore(SCRAPER_MAX_CONCURRENCY)
 
 # date(str) -> {"ts": float, "ticks": int}
 INFLIGHT = {}
@@ -132,7 +131,7 @@ def api_yeongdo():
 # === Gudeok polling cache ===
 GUDEOK_CACHE = {}      # date -> (data, ts)
 GUDEOK_LOCK = Lock()
-GUDEOK_TTL  = 60
+GUDEOK_TTL  = 180
 GUDEOK_INFLIGHT = {}   # date -> {"ts": float, "ticks": int}
 
 def _progress_ticker_gudeok(date_key: str):
@@ -212,9 +211,17 @@ def _new_driver(headless: bool = True, window: str = "1280,1600") -> webdriver.C
     opts.add_argument("--disable-dev-shm-usage")
     opts.add_argument("--disable-gpu")
     opts.add_argument("--lang=ko-KR")
-    opts.add_argument(f"--window-size={window}")
+    opts.add_argument("--window-size=" + window)
     opts.add_argument("--remote-debugging-port=0")
 
+    # 메모리 다이어트
+    opts.add_argument("--blink-settings=imagesEnabled=false")        # 이미지 로딩 차단
+    opts.add_argument("--disable-features=NetworkServiceInProcess")  # 프로세스 수 절약
+    opts.add_argument("--disable-background-networking")
+    opts.add_argument("--mute-audio")
+    opts.add_argument("--no-zygote")
+    opts.add_argument("--renderer-process-limit=1")
+    
     # 안정화 플래그 보강
     opts.add_argument("--no-first-run")
     opts.add_argument("--no-default-browser-check")
@@ -230,6 +237,13 @@ def _new_driver(headless: bool = True, window: str = "1280,1600") -> webdriver.C
     # UA (그대로)
     opts.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                       "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+
+    # 폰트/이미지 더 강하게 차단
+    prefs = {
+        "profile.managed_default_content_settings.images": 2,
+        "profile.managed_default_content_settings.stylesheets": 1,  # CSS는 켜두되(0), 너무 깨지면 1로 낮춰도 됨
+    }
+    opts.add_experimental_option("prefs", prefs)
 
     # 실행마다 고유 프로필/캐시 디렉토리(이미 적용한 구조 유지)
     import tempfile, shutil, os
