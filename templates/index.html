@@ -482,7 +482,10 @@
               <td>{{ label }}</td>
               <td>10,000원 (4인 이하)</td>
               <td>20,000원 (5~9인 이하)</td>
-              <td>{{ (av_cnt if av_cnt is not none else '—') }} / {{ ids|length }}</td>
+              <td>
+                <span id="gudeok-all-{{ loop.index }}-remain">{{ (av_cnt if av_cnt is not none else '—') }}</span>
+                / {{ ids|length }}
+              </td>
               {# ✅ 비고: 첫 행에서만 rowspan으로 병합, 고정 문구 #}
               {% if loop.first %}<td rowspan="{{ groups|length }}">평일/주말 비용 동일</td>{% endif %}
             </tr>
@@ -493,20 +496,8 @@
       </tbody>
     </table>
     <div id="yeongdo-hint-all" style="margin:8px 0; color:#6c757d;"></div>
-    <script>
-      document.addEventListener('DOMContentLoaded', function(){
-        // ‘전체’에서도 영도 데이터 백그라운드로 가져와서 표에 반영
-        if ('{{ selected_camp_key }}' === 'all') {
-          const hintAll = document.getElementById('yeongdo-hint-all');
-          if (hintAll && !document.getElementById('yeongdo-hint')) {
-            const alias = document.createElement('span');
-            alias.id = 'yeongdo-hint';
-            hintAll.appendChild(alias);
-          }
-          loadYeongdo('{{ selected_date }}');
-        }
-      });
-    </script>
+    <div id="gudeok-hint-all" style="margin:4px 0; color:#6c757d;"></div>
+
     {% else %}
 
     {% for camp in all_camps %}
@@ -750,11 +741,11 @@
                 </p>
               </div>
             {% endfor %}
+        {% elif selected_camp_key == 'gudeok' %}
+          <div id="gudeok-wrap">
+            <p id="gudeok-hint" style="color:#6c757d">구덕 데이터를 불러오는 중입니다…</p>
 
-          {% elif selected_camp_key == 'gudeok' %}
-            {# ---- 구덕 ---- #}
-            {% set area = camp.areas['deck'] %}
-            {% set group_defs = [
+            {% set groups = [
               {'label':'1 야영장','sites':['1-1','1-2']},
               {'label':'2 야영장','sites':['2-1','2-2','2-3','2-4']},
               {'label':'3 야영장','sites':['3-1','3-2','3-3']},
@@ -762,21 +753,23 @@
               {'label':'5 야영장','sites':['5-1','5-2','5-3','5-4']},
               {'label':'6 야영장','sites':['6-1','6-2']}
             ] %}
-            {% for grp in group_defs %}
-              {% set ns = namespace(av=0) %}
-              {% for sid in grp.sites %}
-                {% if sid in area.available %}{% set ns.av = ns.av + 1 %}{% endif %}
-              {% endfor %}
-              <div class="area-container">
-                <h3 class="area-title">{{ grp.label }} (잔여: {{ ns.av }}개 / {{ grp.sites|length }}개)</h3>
-                <div class="site-list">
-                  {% for sid in grp.sites %}
-                    {% set status_class = 'text-available' if sid in area.available else ('text-unavailable' if sid in area.unavailable else '') %}
-                    <div class="site-item {{ status_class }}">{{ sid }}</div>
-                  {% endfor %}
-                </div>
+
+            {% for grp in groups %}
+              <div class="area-container" id="gudeok-{{ loop.index0 }}">
+                <h3 class="area-title">
+                  {{ grp.label }} (잔여: <span class="cnt-available">0</span>개 / {{ grp.sites|length }}개)
+                </h3>
+                <div class="site-list" data-sites="{{ grp.sites|join(',') }}"></div>
               </div>
             {% endfor %}
+          </div>
+
+          <script>
+            document.addEventListener('DOMContentLoaded', function () {
+              loadGudeok('{{ selected_date }}');
+            });
+          </script>
+
 
           {% else %}
             <p>표시할 캠핑장 정보가 없습니다.</p>
@@ -962,8 +955,201 @@
         if (el) el.textContent = String(values[k]);
       });
     }
+    </script><!-- 구덕 탭 전용 스크립트: 통째로 교체 -->
+    <script>
+    let GUDEOK_TAB_POLLING = null;
+
+    function loadGudeok(dateStr){
+      stopGudeokTabPolling();
+      const maxTries = 60;
+      let tries = 0;
+      const url = `/api/gudeok?date=${encodeURIComponent(dateStr)}`;
+      const hint = document.getElementById('gudeok-hint');
+
+      const tick = () => {
+        fetch(url, {cache:'no-store'})
+          .then(r=>r.json())
+          .then(json=>{
+            if (json.status === 'ready'){
+              if (hint) hint.textContent = '구덕 데이터를 가져왔습니다.';
+              renderGudeok(json.data);
+              stopGudeokTabPolling();
+            } else if (json.status === 'pending'){
+              if (tries++ < maxTries){
+                if (hint) hint.textContent = `구덕 수집 중… (${tries}/${maxTries})`;
+                GUDEOK_TAB_POLLING = setTimeout(tick, 1000);
+              } else {
+                if (hint) hint.textContent = '처리가 지연되고 있어요. 계속 확인 중…';
+                tries = 0;
+                GUDEOK_TAB_POLLING = setTimeout(tick, 5000);
+              }
+            } else {
+              if (hint) hint.textContent = '알 수 없는 응답입니다.';
+              stopGudeokTabPolling();
+            }
+          })
+          .catch(_=>{
+            if (tries++ < maxTries){
+              if (hint) hint.textContent = `재시도 중… (${tries}/${maxTries})`;
+              GUDEOK_TAB_POLLING = setTimeout(tick, 1200);
+            } else {
+              if (hint) hint.textContent = '네트워크 오류가 발생했습니다.';
+              stopGudeokTabPolling();
+            }
+          });
+      };
+      tick();
+    }
+
+    function stopGudeokTabPolling(){
+      if (GUDEOK_TAB_POLLING){
+        clearTimeout(GUDEOK_TAB_POLLING);
+        GUDEOK_TAB_POLLING = null;
+      }
+    }
+
+    function renderGudeok(data){
+      const deck = data?.deck || {};
+      const av = (deck.available || []).map(String);
+      const un = (deck.unavailable || []).map(String);
+
+      // 그룹별 컨테이너 순회
+      document.querySelectorAll('.area-container[id^="gudeok-"]').forEach((wrap)=>{
+        const listEl = wrap.querySelector('.site-list');
+        const cntEl  = wrap.querySelector('.cnt-available');
+        const sites  = (listEl.getAttribute('data-sites') || '').split(',').map(s=>s.trim()).filter(Boolean);
+
+        // 그룹 잔여 계산
+        const avCnt = sites.reduce((n, id)=> n + (av.includes(id) ? 1 : 0), 0);
+        if (cntEl) cntEl.textContent = avCnt;
+
+        // 렌더
+        listEl.innerHTML = '';
+        sites.forEach(id=>{
+          const isAv = av.includes(id);
+          const isUn = un.includes(id);
+          const div = document.createElement('div');
+          div.className = 'site-item ' + (isAv ? 'text-available' : (isUn ? 'text-unavailable' : ''));
+          div.textContent = id; // ‘1-1’ 같은 원형 그대로 표시
+          listEl.appendChild(div);
+        });
+      });
+    }
     </script>
 
+    <script>
+    document.addEventListener('DOMContentLoaded', function(){
+      if ('{{ selected_camp_key }}' === 'all') {
+        // 영도 힌트 스팬 준비
+        const yAll = document.getElementById('yeongdo-hint-all');
+        if (yAll && !document.getElementById('yeongdo-hint')) {
+          const s = document.createElement('span');
+          s.id = 'yeongdo-hint';
+          yAll.appendChild(s);
+        }
+        loadYeongdo('{{ selected_date }}');
+
+        // 구덕 힌트 스팬 준비 (영도 바로 아래 줄)
+        const gAll = document.getElementById('gudeok-hint-all');
+        if (gAll && !document.getElementById('gudeok-hint')) {
+          const s = document.createElement('span');
+          s.id = 'gudeok-hint';
+          gAll.appendChild(s);
+        }
+        loadGudeokAll('{{ selected_date }}');
+      }
+    });
+    </script>
+
+    <script>
+    let GUDEOK_ALL_POLLING = null;
+
+    function loadGudeokAll(dateStr){
+      stopGudeokAllPolling();
+      const url = `/api/gudeok?date=${encodeURIComponent(dateStr)}`;
+      let tries = 0, maxTries = 60;
+
+      // 힌트 엘리먼트 (없으면 생성하지 말고 조용히 패스)
+      const hint = document.getElementById('gudeok-hint');
+
+      const tick = () => {
+        fetch(url, {cache:'no-store'})
+          .then(r=>r.json())
+          .then(json=>{
+            if (json.status === 'ready') {
+              if (hint) hint.textContent = '구덕 데이터를 가져왔습니다.';
+              renderGudeokAll(json.data);
+              stopGudeokAllPolling();
+            } else if (json.status === 'pending') {
+              if (tries++ < maxTries) {
+                if (hint) hint.textContent = `구덕 수집 중… (${tries}/${maxTries})`;
+                GUDEOK_ALL_POLLING = setTimeout(tick, 1000);
+              } else {
+                if (hint) hint.textContent = '처리가 지연되고 있어요. 계속 확인 중…';
+                tries = 0;
+                GUDEOK_ALL_POLLING = setTimeout(tick, 5000);
+              }
+            } else {
+              if (hint) hint.textContent = '알 수 없는 응답입니다.';
+              stopGudeokAllPolling();
+            }
+          })
+          .catch(_=>{
+            if (tries++ < maxTries) {
+              if (hint) hint.textContent = `재시도 중… (${tries}/${maxTries})`;
+              GUDEOK_ALL_POLLING = setTimeout(tick, 1200);
+            } else {
+              if (hint) hint.textContent = '네트워크 오류가 발생했습니다.';
+              stopGudeokAllPolling();
+            }
+          });
+      };
+      // 최초 한 번 “수집 중…” 초기화
+      if (hint) hint.textContent = '구덕 수집 중… (0/60)';
+      tick();
+    }
+
+    function stopGudeokAllPolling(){
+      if (GUDEOK_ALL_POLLING){ clearTimeout(GUDEOK_ALL_POLLING); GUDEOK_ALL_POLLING = null; }
+    }
+
+    /* 전체 표(1~6야영장) 갱신 */
+    function renderGudeokAll(data){
+      const deck = (data && data.deck) ? data.deck : {available:[],unavailable:[]};
+
+      // ID 정규화: "1-01" / "1 - 1" / "1_1" → "1-1"
+      const normId = (v) => {
+        if (v == null) return "";
+        let s = String(v).trim();
+        s = s.replace(/\s+/g, "");
+        s = s.replace(/[^\d\-]/g, "-");
+        const m = s.match(/(\d+)\D+(\d+)/);
+        if (m) return `${parseInt(m[1],10)}-${parseInt(m[2],10)}`;
+        const m2 = s.match(/^(\d+)-(\d+)$/);
+        if (m2) return `${parseInt(m2[1],10)}-${parseInt(m2[2],10)}`;
+        return s;
+      };
+
+      const avSet = new Set((deck.available  || []).map(normId));
+      const unSet = new Set((deck.unavailable|| []).map(normId));
+
+      const groups = [
+        ['1',['1-1','1-2']],
+        ['2',['2-1','2-2','2-3','2-4']],
+        ['3',['3-1','3-2','3-3']],
+        ['4',['4-1','4-2','4-3']],
+        ['5',['5-1','5-2','5-3','5-4']],
+        ['6',['6-1','6-2']],
+      ];
+
+      groups.forEach(([idx, ids])=>{
+        let cnt = 0;
+        ids.forEach(id => { if (avSet.has(normId(id))) cnt++; });
+        const el = document.getElementById(`gudeok-all-${idx}-remain`);
+        if (el) el.textContent = String(cnt);
+      });
+    }
+    </script>
 
     <!-- 후원하기 섹션 -->
     <section class="donate-wrap">
