@@ -455,12 +455,12 @@
         {% set avail = (area.available or []) | map('string') | map('trim') | list %}
         {% set unavail = (area.unavailable or []) | map('string') | map('trim') | list %}
         {% set groups = [
-          ('1야영장',['1-1','1-2']),
-          ('2야영장',['2-1','2-2','2-3','2-4']),
-          ('3야영장',['3-1','3-2','3-3']),
-          ('4야영장',['4-1','4-2','4-3']),
-          ('5야영장',['5-1','5-2','5-3','5-4']),
-          ('6야영장',['6-1','6-2'])
+          ('1 야영장',['1-1','1-2']),
+          ('2 야영장',['2-1','2-2','2-3','2-4']),
+          ('3 야영장',['3-1','3-2','3-3']),
+          ('4 야영장',['4-1','4-2','4-3']),
+          ('5 야영장',['5-1','5-2','5-3','5-4']),
+          ('6 야영장',['6-1','6-2'])
         ] %}
         {% set total_all = 0 %}
         {% for _lbl, _ids in groups %}{% set total_all = total_all + (_ids|length) %}{% endfor %}
@@ -777,10 +777,25 @@
           </div>
 
           <script>
-            document.addEventListener('DOMContentLoaded', function () {
-              loadGudeok('{{ selected_date }}');
-            });
+          document.addEventListener('DOMContentLoaded', function () {
+            const dateStr = '{{ selected_date }}';
+            const hint = document.getElementById('gudeok-hint');
+
+            // ① 캐시가 있으면 즉시 그려서 '빈 화면'을 없앰
+            if (window.__GUDEOK_CACHE && window.__GUDEOK_CACHE[dateStr]) {
+              try {
+                renderGudeok(window.__GUDEOK_CACHE[dateStr]);
+                if (hint) hint.textContent = '캐시로 표시 중… (서버 최신 확인 중)';
+              } catch (_) {}
+            } else {
+              if (hint) hint.textContent = '구덕 수집 중… (0/60)';
+            }
+
+           // ② 서버 최신 확인(폴링) 시작
+            loadGudeok(dateStr);
+          });
           </script>
+
 
 
           {% else %}
@@ -998,7 +1013,7 @@
         if (el) el.textContent = String(values[k]);
       });
     }
-    </script><!-- 구덕 탭 전용 스크립트: 통째로 교체 -->
+    </script>
     <script>
     let GUDEOK_TAB_POLLING = null;
 
@@ -1007,18 +1022,38 @@
       const maxTries = 60;
       let tries = 0;
       const url = `/api/gudeok?date=${encodeURIComponent(dateStr)}`;
-      const hint = document.getElementById('gudeok-hint-all');
+      const hint = document.getElementById('gudeok-hint');
+
+      if (hint) hint.textContent = `구덕 수집 중… (${tries}/${maxTries})`;
 
       const tick = () => {
-        fetch(url, {cache:'no-store'})
-          .then(r=>r.json())
-          .then(json=>{
+        fetch(url, { cache: 'no-store' })
+          .then(async (r) => {
+            if (!r.ok) {
+              const body = await r.text().catch(()=>'');
+              // 디버깅 도움: 상태/일부 바디를 콘솔로
+              console.warn('[gudeok] non-OK', r.status, body.slice(0,120));
+              throw new Error(`HTTP ${r.status}`);
+            }
+            const ct = r.headers.get('content-type') || '';
+            if (!ct.includes('application/json')) {
+              const body = await r.text().catch(()=> '');
+              console.warn('[gudeok] not JSON', ct, body.slice(0,120));
+              throw new Error('Non-JSON');
+            }
+            return r.json();
+          })
+          .then((json) => {
             if (json.status === 'ready'){
               if (hint) hint.textContent = '구덕 데이터를 가져왔습니다.';
+              // 성공 시 캐시에도 저장
+              window.__GUDEOK_CACHE = window.__GUDEOK_CACHE || {};
+              window.__GUDEOK_CACHE[dateStr] = json.data;
               renderGudeok(json.data);
               stopGudeokTabPolling();
             } else if (json.status === 'pending'){
-              if (tries++ < maxTries){
+              if (tries < maxTries){
+                tries++;
                 if (hint) hint.textContent = `구덕 수집 중… (${tries}/${maxTries})`;
                 GUDEOK_TAB_POLLING = setTimeout(tick, 1000);
               } else {
@@ -1031,16 +1066,18 @@
               stopGudeokTabPolling();
             }
           })
-          .catch(_=>{
-            if (tries++ < maxTries){
+          .catch((err) => {
+            if (tries < maxTries){
+              tries++;
               if (hint) hint.textContent = `재시도 중… (${tries}/${maxTries})`;
               GUDEOK_TAB_POLLING = setTimeout(tick, 1200);
             } else {
-              if (hint) hint.textContent = '네트워크 오류가 발생했습니다.';
+              if (hint) hint.textContent = '네트워크/서버 오류가 발생했습니다. (캐시가 있으면 그대로 표시됩니다)';
               stopGudeokTabPolling();
             }
           });
       };
+
       tick();
     }
 
@@ -1050,35 +1087,9 @@
         GUDEOK_TAB_POLLING = null;
       }
     }
-
-    function renderGudeok(data){
-      const deck = data?.deck || {};
-      const av = (deck.available || []).map(String);
-      const un = (deck.unavailable || []).map(String);
-
-      // 그룹별 컨테이너 순회
-      document.querySelectorAll('.area-container[id^="gudeok-"]').forEach((wrap)=>{
-        const listEl = wrap.querySelector('.site-list');
-        const cntEl  = wrap.querySelector('.cnt-available');
-        const sites  = (listEl.getAttribute('data-sites') || '').split(',').map(s=>s.trim()).filter(Boolean);
-
-        // 그룹 잔여 계산
-        const avCnt = sites.reduce((n, id)=> n + (av.includes(id) ? 1 : 0), 0);
-        if (cntEl) cntEl.textContent = avCnt;
-
-        // 렌더
-        listEl.innerHTML = '';
-        sites.forEach(id=>{
-          const isAv = av.includes(id);
-          const isUn = un.includes(id);
-          const div = document.createElement('div');
-          div.className = 'site-item ' + (isAv ? 'text-available' : (isUn ? 'text-unavailable' : ''));
-          div.textContent = id; // ‘1-1’ 같은 원형 그대로 표시
-          listEl.appendChild(div);
-        });
-      });
-    }
     </script>
+
+
     <script>
     document.addEventListener('DOMContentLoaded', function(){
       if ('{{ selected_camp_key }}' === 'all') {
@@ -1130,6 +1141,8 @@
             if (json.status === 'ready') {
               if (hint) hint.textContent = '구덕 데이터를 가져왔습니다.';
               renderGudeokAll(json.data);
+              window.__GUDEOK_CACHE = window.__GUDEOK_CACHE || {};
+              window.__GUDEOK_CACHE['{{ selected_date }}'] = json.data;
               stopGudeokAllPolling();
             } else if (json.status === 'pending') {
               if (tries++ < maxTries) {
@@ -1201,6 +1214,46 @@
       });
     }
     </script>
+
+    <script>
+    function renderGudeok(data){
+      const deck = data?.deck || {};
+      const normId = (v) => {
+        if (v == null) return "";
+        let s = String(v).trim();
+        s = s.replace(/\s+/g, "");
+        s = s.replace(/[^\d\-]/g, "-");
+        const m = s.match(/(\d+)\D+(\d+)/);
+        if (m) return `${parseInt(m[1],10)}-${parseInt(m[2],10)}`;
+        const m2 = s.match(/^(\d+)-(\d+)$/);
+        if (m2) return `${parseInt(m2[1],10)}-${parseInt(m2[2],10)}`;
+        return s;
+      };
+
+      const av = (deck.available || []).map(normId);
+      const un = (deck.unavailable || []).map(normId);
+
+      document.querySelectorAll('.area-container[id^="gudeok-"]').forEach((wrap)=>{
+        const listEl = wrap.querySelector('.site-list');
+        const cntEl  = wrap.querySelector('.cnt-available');
+        const sites  = (listEl.getAttribute('data-sites') || '').split(',').map(s=>s.trim()).filter(Boolean);
+
+        const avCnt = sites.reduce((n, id)=> n + (av.includes(normId(id)) ? 1 : 0), 0);
+        if (cntEl) cntEl.textContent = avCnt;
+
+        listEl.innerHTML = '';
+        sites.forEach(id=>{
+          const isAv = av.includes(normId(id));
+          const isUn = un.includes(normId(id));
+          const div = document.createElement('div');
+          div.className = 'site-item ' + (isAv ? 'text-available' : (isUn ? 'text-unavailable' : ''));
+          div.textContent = id;
+          listEl.appendChild(div);
+        });
+      });
+    }
+    </script>
+
 
     <!-- 후원하기 섹션 -->
     <section class="donate-wrap">
