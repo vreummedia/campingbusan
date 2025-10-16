@@ -840,28 +840,97 @@
             document.getElementById('dateForm').submit();
         }
     </script>
+
     <script>
     let YEONGDO_POLLING = null;
 
-    function loadYeongdo(dateStr, suffix="") {
+    // ALL 화면에서는 표 개요(잔여/총)만 쓰므로, 탭 전용 DOM이 없으면 아무 것도 안 함.
+    function renderYeongdo(data, suffix) {
+      // 탭 모드에서만 있는 컨테이너(예: #yeongdo-auto-0 ...)가 실제 있을 때만 렌더
+      const hasTabContainer =
+        document.querySelector(`[id^="yeongdo-caravan"]`) ||
+        document.querySelector(`[id^="yeongdo-auto"]`) ||
+        document.querySelector(`[id^="yeongdo-general"]`);
+
+      if (!hasTabContainer) return;
+
+      const areas = [
+        { key: "caravan", label: "카라반" },
+        { key: "auto",    label: "오토"    },
+        { key: "general", label: "일반"    },
+      ];
+
+      areas.forEach(({ key }) => {
+        const wrap = document.getElementById(`yeongdo-${key}${suffix}`);
+        if (!wrap) return;
+
+        const cntEl = wrap.querySelector(".cnt-available");
+        const list  = wrap.querySelector(".site-list");
+        const av    = (data?.[key]?.available || []).map(n => String(n).padStart(2, "0"));
+        const un    = (data?.[key]?.unavailable || []).map(n => String(n).padStart(2, "0"));
+
+        if (cntEl) cntEl.textContent = av.length;
+        if (list) {
+          list.innerHTML = "";
+          const all = [...av.map(v => ({ v, cls: "text-available" })), ...un.map(v => ({ v, cls: "text-unavailable" }))];
+          // 번호 오름차순 정렬
+          all.sort((a, b) => parseInt(a.v, 10) - parseInt(b.v, 10));
+          all.forEach(({ v, cls }) => {
+            const div = document.createElement("div");
+            div.className = `site-item ${cls}`;
+            div.textContent = v;
+            list.appendChild(div);
+          });
+        }
+      });
+    }
+
+    // (기존) loadYeongdo/stopYeongdoPolling 그대로 유지
+    </script>
+
+    <script>
+
+    // 영도 완료를 기다린 뒤(ready) 구덕을 시작하되,
+    // 오래 걸리면 일정 시간 후 구덕을 "추가로" 시작하기 위한 지연(ms)
+    const YEONGDO_GUDEOK_DELAY_MS = 120000; // ← 120초. 원하면 0~180000 등으로 조정
+
+    function loadYeongdo(dateStr, suffix="", onGudeokKickoff=null) {
       stopYeongdoPolling();
       const maxTries = 60;
       let tries = 0;
       const url = `/api/yeongdo?date=${encodeURIComponent(dateStr)}`;
       const hint = document.getElementById(`yeongdo-hint${suffix}`) || document.getElementById('yeongdo-hint');
 
+      // 지연 후 "구덕도 시작해!" 콜백을 불러주는 타이머 (영도 취소 X)
+      let delayedKickTimer = null;
+      if (typeof onGudeokKickoff === 'function' && YEONGDO_GUDEOK_DELAY_MS > 0) {
+        delayedKickTimer = setTimeout(() => {
+          try { onGudeokKickoff(); } catch(e){}
+          // 지연 시작은 1회만
+        }, YEONGDO_GUDEOK_DELAY_MS);
+      }
+
       const tick = () => {
         fetch(url, {cache:'no-store'})
           .then(r => r.json())
           .then(json => {
             if (json.status === 'ready') {
-            if (json.data && json.data.error) {
-              if (hint) hint.textContent = '영도 오류: ' + json.data.error;
-            } else if (hint) {
-              hint.textContent = '영도 데이터를 가져왔습니다.';
-            }
+              if (json.data && json.data.error) {
+                if (hint) hint.textContent = '영도 오류: ' + json.data.error;
+              } else if (hint) {
+                hint.textContent = '영도 데이터를 가져왔습니다.';
+              }
               renderYeongdo(json.data, suffix);
               renderYeongdoAllSummary(json.data);
+
+              // 영도가 준비됐으면, 아직 구덕을 안 시작했다면 지금 시작하도록 콜백 호출
+              if (typeof onGudeokKickoff === 'function') {
+                try { onGudeokKickoff(); } catch(e){}
+              }
+
+              // 지연 타이머가 걸려 있었다면 정리
+              if (delayedKickTimer) { clearTimeout(delayedKickTimer); delayedKickTimer = null; }
+
               stopYeongdoPolling();
             } else if (json.status === 'pending') {
               if (tries++ < maxTries) {
@@ -869,8 +938,8 @@
                 YEONGDO_POLLING = setTimeout(tick, 1000);
               } else {
                 if (hint) hint.textContent = '처리가 지연되고 있어요. 계속 확인 중…';
-                tries = 0;                 // 카운터 리셋
-                YEONGDO_POLLING = setTimeout(tick, 5000); // 5초 쉬고 다시 폴링
+                tries = 0;
+                YEONGDO_POLLING = setTimeout(tick, 5000);
               }
             } else {
               if (hint) hint.textContent = '알 수 없는 응답입니다.';
@@ -897,47 +966,9 @@
         YEONGDO_POLLING = null;
       }
     }
-
-    function renderYeongdo(data, suffix="") {
-      const groups = [
-        {k:'caravan', label:'카라반', total:15},
-        {k:'auto',    label:'오토',   total:40},
-        {k:'general', label:'일반',   total:12},
-      ];
-
-      groups.forEach(g => {
-        const wrap = document.getElementById(`yeongdo-${g.k}${suffix}`) || document.getElementById(`yeongdo-${g.k}`);
-        if (!wrap) return;
-        const listEl = wrap.querySelector('.site-list');
-        const cntEl  = wrap.querySelector('.cnt-available');
-
-        const av = (data[g.k]?.available   || []).slice().sort((a,b)=>Number(a)-Number(b));
-        const un = (data[g.k]?.unavailable || []).slice().sort((a,b)=>Number(a)-Number(b));
-        if (cntEl) cntEl.textContent = av.length;
-
-        const pad2 = v => String(v).padStart(2,'0');
-
-        listEl.innerHTML = '';
-        const all = [...new Set([...av, ...un])].sort((a,b)=>Number(a)-Number(b));
-        if (all.length === 0) {
-          const p = document.createElement('p');
-          p.style.cssText = 'color:#6c757d; font-style:italic;';
-          p.textContent = '해당 구역의 사이트 정보를 찾을 수 없습니다.';
-          listEl.appendChild(p);
-          return;
-        }
-
-        all.forEach(sid => {
-          const div = document.createElement('div');
-          const isAv = av.includes(sid);
-          const isUn = un.includes(sid);
-          div.className = 'site-item ' + (isAv ? 'text-available' : (isUn ? 'text-unavailable' : ''));
-          div.textContent = pad2(sid);
-          listEl.appendChild(div);
-        });
-      });
-    }
     </script>
+
+
     <script>
     function renderYeongdoAllSummary(data){
       // caravan(공유), auto, general
@@ -976,7 +1007,7 @@
       const maxTries = 60;
       let tries = 0;
       const url = `/api/gudeok?date=${encodeURIComponent(dateStr)}`;
-      const hint = document.getElementById('gudeok-hint');
+      const hint = document.getElementById('gudeok-hint-all');
 
       const tick = () => {
         fetch(url, {cache:'no-store'})
@@ -1048,30 +1079,38 @@
       });
     }
     </script>
-
     <script>
     document.addEventListener('DOMContentLoaded', function(){
       if ('{{ selected_camp_key }}' === 'all') {
-        // 영도 힌트 스팬 준비
-        const yAll = document.getElementById('yeongdo-hint-all');
-        if (yAll && !document.getElementById('yeongdo-hint')) {
-          const s = document.createElement('span');
-          s.id = 'yeongdo-hint';
-          yAll.appendChild(s);
+        // 힌트(영도)
+        const hintAll = document.getElementById('yeongdo-hint-all');
+        if (hintAll && !document.getElementById('yeongdo-hint')) {
+          const alias = document.createElement('span');
+          alias.id = 'yeongdo-hint';
+          hintAll.appendChild(alias);
         }
-        loadYeongdo('{{ selected_date }}');
+        // 힌트(구덕)
+        if (!document.getElementById('gudeok-hint-all')) {
+          const p = document.createElement('div');
+          p.id = 'gudeok-hint-all';
+          p.style.cssText = 'margin:4px 0; color:#6c757d;';
+          const anchor = document.getElementById('yeongdo-hint-all') || document.body;
+          anchor.insertAdjacentElement('afterend', p);
+        }
+        const gudeokHint = document.getElementById('gudeok-hint-all');
+        if (gudeokHint) gudeokHint.textContent = '구덕 수집 중… (대기 중)';
 
-        // 구덕 힌트 스팬 준비 (영도 바로 아래 줄)
-        const gAll = document.getElementById('gudeok-hint-all');
-        if (gAll && !document.getElementById('gudeok-hint')) {
-          const s = document.createElement('span');
-          s.id = 'gudeok-hint';
-          gAll.appendChild(s);
-        }
-        loadGudeokAll('{{ selected_date }}');
+        // 영도 시작: 준비되면 구덕 시작
+        // (또는 YEONGDO_GUDEOK_DELAY_MS 후 자동으로 구덕도 시작)
+        loadYeongdo('{{ selected_date }}', '', function(){
+          if (gudeokHint) gudeokHint.textContent = '구덕 수집 중…';
+          loadGudeokAll('{{ selected_date }}');
+        });
       }
     });
     </script>
+
+
 
     <script>
     let GUDEOK_ALL_POLLING = null;
@@ -1082,7 +1121,7 @@
       let tries = 0, maxTries = 60;
 
       // 힌트 엘리먼트 (없으면 생성하지 말고 조용히 패스)
-      const hint = document.getElementById('gudeok-hint');
+      const hint = document.getElementById('gudeok-hint-all');
 
       const tick = () => {
         fetch(url, {cache:'no-store'})
