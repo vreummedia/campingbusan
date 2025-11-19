@@ -31,10 +31,6 @@ app = Flask(
     static_url_path='/static'
 )
 
-@app.route('/google8c4fe323a4fb610e.html')
-def google_verification():
-    return render_template('google8c4fe323a4fb610e.html')
-
 DISABLE_SCRAPERS = os.getenv("DISABLE_SCRAPERS") == "1"
 
 
@@ -1599,4 +1595,5 @@ def health():
 
 if __name__ == "__main__":
     app.run(debug=True, use_reloader=False, threaded=False)
+
 
