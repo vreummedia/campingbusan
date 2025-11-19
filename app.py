@@ -33,6 +33,13 @@ app = Flask(
 
 DISABLE_SCRAPERS = os.getenv("DISABLE_SCRAPERS") == "1"
 
+@app.route('/robots.txt')
+def serve_robots():
+    return send_from_directory(app.root_path, 'robots.txt')
+
+@app.route('/sitemap.xml')
+def serve_sitemap():
+    return send_from_directory(app.root_path, 'sitemap.xml')
 
 from flask import jsonify
 from threading import Thread, Lock, Semaphore
@@ -1595,5 +1602,6 @@ def health():
 
 if __name__ == "__main__":
     app.run(debug=True, use_reloader=False, threaded=False)
+
 
 
